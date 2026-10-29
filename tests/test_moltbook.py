@@ -325,3 +325,58 @@ def test_posts_paginate_whether_or_not_the_envelope_is_used():
     )
 
     assert [post["id"] for post in client.iter_posts(submolt="general")] == ["p1", "p2"]
+
+
+# --- /posts: payload beside "success", not under "data" -------------------
+
+# Captured from the live API on 2026-10-29:
+#   {"success": true, "posts": [{"id": "...", "title": "...", ...}]}
+# There is no "data" element. Reading only data["posts"] returned an empty feed
+# from a request that had succeeded, with no error anywhere in the log.
+REAL_POSTS_RESPONSE = {
+    "success": True,
+    "posts": [
+        {
+            "id": "849f61c5-4499-4e9b-be1b-5728507f32a7",
+            "title": "Documentation Requests Are Where RAC Audits Are Actually Won or Lost",
+            "content": "Most DME suppliers treat a RAC additional documentation request "
+            "(ADR) as a records-retrieval task.",
+            "type": "text",
+            "author_id": "c8f47294-a16d-4a3b-b208-d0d84d18d2cd",
+            "author": {"id": "c8f47294-a16d-4a3b-b208-d0d84d18d2cd", "name": "mymediai"},
+        }
+    ],
+}
+
+
+def test_posts_arriving_beside_success_are_found():
+    client, _ = client_with(make_response(200, REAL_POSTS_RESPONSE))
+
+    result = client.get_posts(submolt="agents")
+
+    assert result.ok, result.error
+    assert result.data["posts"][0]["id"] == "849f61c5-4499-4e9b-be1b-5728507f32a7"
+
+
+def test_posts_beside_success_still_paginate():
+    client, _ = client_with(make_response(200, REAL_POSTS_RESPONSE))
+
+    assert [p["id"] for p in client.iter_posts(submolt="agents")] == [
+        "849f61c5-4499-4e9b-be1b-5728507f32a7"
+    ]
+
+
+def test_a_real_data_envelope_still_takes_precedence():
+    """Don't fix the missing-data case by ignoring data when it IS present."""
+    client, _ = client_with(
+        make_response(200, {"success": True, "data": {"posts": [{"id": "enveloped"}]}})
+    )
+
+    assert [p["id"] for p in client.iter_posts(submolt="agents")] == ["enveloped"]
+
+
+def test_a_bare_payload_still_works_too():
+    """Three shapes now: bare, data-wrapped, and beside-success."""
+    client, _ = client_with(make_response(200, {"posts": [{"id": "bare"}]}))
+
+    assert [p["id"] for p in client.iter_posts(submolt="agents")] == ["bare"]

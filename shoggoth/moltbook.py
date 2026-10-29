@@ -188,6 +188,17 @@ class MoltbookClient:
         if "success" in body:
             if body.get("success"):
                 data = body.get("data")
+                # /posts is shaped {"success": true, "posts": [...]}: the payload
+                # sits beside "success" rather than under "data". Looking only
+                # under "data" found nothing, which silently produced an empty
+                # feed on a request that had actually succeeded.
+                if not isinstance(data, (dict, list)):
+                    # "data" itself is excluded: it is either absent or
+                    # unusable, and keeping it would only nest a None.
+                    data = {
+                        key: value for key, value in body.items() if key not in ("success", "data")
+                    }
+                    log.debug("no usable data element; using the rest of the body")
                 return Result(ok=True, status=status, data=data if isinstance(data, dict) else {})
             error = str(body.get("error") or f"HTTP {status}")
             hint = body.get("hint")
