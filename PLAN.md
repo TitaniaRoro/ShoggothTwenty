@@ -6,7 +6,10 @@
 > platform's own rules make the human owner legally responsible for everything it does. This version
 > is written for that.
 >
-> Status: **draft for review.** No code yet.
+> Status: **implemented through M1 (read-only).** The observation, triage, Telegram reporting,
+> state/dedupe and both workflows are built and tested — 75 tests, no network required. M2 onward
+> (persona drafting, approvals, the write path) is designed here but deliberately not written yet:
+> this agent starts in L0 shadow mode. See §11 for where we are.
 
 ## 1. What we're building
 
@@ -92,38 +95,40 @@ sits on our side of the line. So the architecture in §5 is built to break the t
 - **Untrusted text is escaped everywhere** it leaves the process (§8).
 - **Public writes are gated** by human approval until we've watched it for a while (§6).
 
-## 4. Hosting: what "24/7" actually costs
+## 4. Hosting: public repo, and what that buys and costs
 
-Private repo, GitHub Free, which includes **$12/month of compute** (not "2,000 minutes" — that figure
-is stale; current billing is a dollar amount, pro-rated by actual run time).
+**Public repo.** Standard GitHub-hosted runners on public repositories are **free with no minute
+cap** [1](https://cicdcalculator.com/github-actions-free-tier). That removes compute as a constraint
+entirely, so we can run the cadence Moltbook actually recommends — **every 30 minutes** — instead of
+the hourly compromise a private repo would have forced. 48 runs/day, ~1,488/month, $0.
 
-With an LLM in the loop, runs get slower. Monthly cost of one heartbeat job:
+What public costs us, and how each is handled:
 
-| Cadence | Runs/mo | @ 60 s | @ 120 s |
-|---|---|---|---|
-| **Hourly** | 744 | $4.46 · 37% | $8.93 · 74% |
-| Every 30 min | 1,488 | $8.93 · 74% | **$17.86 · over budget** |
+| Cost | Handling |
+|---|---|
+| **Scheduled workflows auto-disable after 60 days with no repository activity** | Solved by the same commits that persist our dedupe state (§9). Bot commits count as activity — it's how production data pipelines keep their schedules alive — and a push made with `GITHUB_TOKEN` resets the timer without triggering other workflows. The watchdog checks for `disabled_inactivity` as a backstop |
+| **Anyone can open a fork PR against a repo that holds secrets** | No `pull_request_target`; secrets in a branch-restricted environment; approval required for outside collaborators' runs; secrets only ever in `env:`, never interpolated into a shell string (§10) |
+| **Everything committed is public** | The persona, code and state file (post IDs and timestamps — nothing sensitive) are public by design. **The audit log is not committed**: it holds model outputs and drafts, lives on a gitignored path, and is uploaded as a short-retention Actions artifact only when something notable happens |
 
-**Recommendation: hourly on Actions to start** (24 check-ins/day), then move to a **self-hosted
-runner** if you want 30-minute cadence. Self-hosted runners are free on every plan and consume zero
-compute allowance, so a machine that's already on — an old laptop, a Pi, or a free Oracle Cloud ARM
-VM — turns "hourly, careful about minutes" into "every 30 minutes, don't think about it". Same code,
-different `runs-on:` line.
-
-Two safety properties to set up on day one:
-- **Do not attach a payment method.** With none on file, GitHub *blocks* usage at the ceiling instead
-  of billing you. Worst case is "the bot stops until next month", never a charge.
-- **Set a budget alert at 50%.**
+Public also means no payment method is needed at all: there's nothing to overrun, so nothing to
+bill. (For reference, the private alternative is $12/month of compute and would have forced hourly
+polling — and the widely quoted "2,000 free minutes" figure is stale.)
 
 Why Actions' cron sloppiness is survivable here: per §2, our actionable rate is capped by Moltbook at
 ~1 post/30 min and 50 comments/day. A 7-minute scheduling delay has no effect on a budget that's
 denominated in days. What *would* hurt is a silently dead workflow, which §9's watchdog covers.
 
+The one thing that *does* get tighter at 30-minute cadence is the **LLM free tier**, not Actions:
+~48 runs/day at a handful of calls each is a few hundred requests a day, against free tiers in the
+1,000–1,500/day range. So: batch triage into a single call per heartbeat, and only generate text for
+items that cleared the deterministic threshold. If we outgrow it, a self-hosted runner is a one-line
+change (`runs-on: self-hosted`) that takes Actions out of the picture entirely.
+
 ## 5. Architecture
 
 ```
                     ┌──────────────────────────────────────────┐
-   GitHub Actions   │  one heartbeat, hourly                   │
+   GitHub Actions   │  one heartbeat, every 30 min             │
    (or self-hosted) │                                          │
                     │  GET /home ──▶ observe                   │
                     │       │                                  │
@@ -316,7 +321,11 @@ Hard rules carried over from v1, all of which bite harder now that we're generat
 ```
 
 - Seen-store is a **bounded ring (~500)** keyed on `(id, updated_at)` so edited posts resurface.
-- Budgets reset at midnight **UTC**. Commit when changed, at most hourly.
+- Budgets reset at midnight **UTC**.
+- **Commit when changed, at most once per hour — and do not remove this step.** It does two jobs at
+  once: it's the durable dedupe store *and* the keepalive that stops GitHub disabling the schedule
+  after 60 days (§4). `last_run_at` changes every run, so in steady state we get ~24 commits/day,
+  which resets that timer with enormous margin.
 - `--bootstrap` sets the head silently so a cold start doesn't flood you; catch-up capped at 180 min
   and `MAX_ITEMS_PER_DIGEST = 20`.
 - **Audit log** as append-only JSONL: every prompt sent, every model output, every action attempted
@@ -339,7 +348,8 @@ all look identical — nothing happens — and GitHub only notifies on *failure*
 | **API key leak** (ban-level offence) | Env var only; sent only to `www.moltbook.com/api/v1` with `allow_redirects=False`; masked in logs; `::add-mask::` in Actions |
 | **Telegram formatting/link injection** | HTML escaping everywhere; ID validation; no previews |
 | **SSRF / agent as probe** | Never fetch URLs from post content; egress limited to two hosts |
-| **Secret exfiltration via fork PR** | No `pull_request_target`; environment-scoped secrets; approval required for outside collaborators |
+| **Secret exfiltration via fork PR** | No `pull_request_target`; environment-scoped secrets restricted to the default branch; approval required for outside collaborators |
+| **Public repo exposes committed files** | Only public-safe state is committed. Credentials, `.env` and the audit log are gitignored; `state/` holds nothing but post IDs and counters |
 | **Silent death** | Watchdog workflow; audit log; run summaries |
 
 **Rotate the key if in doubt.** Moltbook's database was exposed in January 2026 with ~1.5 million API
@@ -348,12 +358,16 @@ agent's key was ever created around then, rotate it.
 
 ## 11. Milestones
 
-- **M0 — Foundations.** Layout, config, pinned deps, fixtures + tests with no network.
-  `agent.py register` creates the agent and secures the one-time key; `agent.py self-check` validates
-  it and reports claim status (`pending_claim` vs `claimed`) — an unclaimed agent can't participate.
-- **M1 — Observe + report (safe to ship alone).** `observe.py`, `triage.py`, `telegram.py`, state,
-  dedupe. Runs hourly, sends topic digests, writes nothing to Moltbook. This is the read-only agent
-  from v1, and it's genuinely useful on its own.
+- **M0 — Foundations.** ✅ Layout, config, hash-pinned deps, fixtures + tests with no network.
+  `agent.py self-check` validates both credentials and reports claim status; `agent.py register`
+  creates the agent and stores the one-time key, but demands `--confirm` because it creates a
+  permanent public identity.
+- **M1 — Observe + report.** ✅ `observe.py`, `triage.py`, `telegram.py`, `digest.py`, state and
+  dedupe, plus both workflows. Runs every 30 minutes, sends batched topic digests, and writes
+  nothing to Moltbook. Genuinely useful on its own, and it's how we'll watch the feed for a week
+  before anything is allowed to post.
+  - Verified end-to-end: the CLI runs against recorded responses; a second run with no feed change
+    produces zero notifications, and an unreachable API exits non-zero instead of looking healthy.
 - **M2 — Shadow mode (L0).** Persona, drafting, policy layer, approval flow, audit log. It proposes;
   you approve from Telegram; you execute. Run for at least a week.
 - **M3 — Challenge handling.** `challenge.py` with the deterministic-first solver, exercised against
@@ -379,7 +393,7 @@ agent's key was ever created around then, rotate it.
 | Autonomy | **L0 shadow** to start: it proposes, you approve, nothing is sent unattended |
 | Model | **Swappable interface**; provider behind an env var. Groq default (lower latency matters for the 5-minute challenge window), Gemini as fallback |
 | Agent | **Doesn't exist yet** — M0 handles registration and claiming |
-| Hosting | Private repo, hourly on Actions; self-hosted runner later if we want 30-minute cadence |
+| Hosting | **Public repo**, 30-minute heartbeat on Actions; free and uncapped |
 
 ### Registration (new agent, so this is step zero)
 
@@ -421,7 +435,7 @@ Retained from v1 — all still true of the pasted script, and all fixed above.
 | 11 | `parse_mode: Markdown` + raw attacker-controlled titles | `HTML` + `html.escape()` |
 | 12 | No 4096-char chunking, no Telegram rate limiting | Chunk on safe boundaries; ~1 msg/sec |
 | 13 | `requests.post()` result ignored | Check `ok` and read `error_code` |
-| 14 | `*/30 * * * *` — fires at :00 and :30, the two busiest slots | Off-peak minute: `'17 * * * *'` |
+| 14 | `*/30 * * * *` — fires at :00 and :30, the two busiest slots | Off-peak minutes: `'13,43 * * * *'` |
 | 15 | "2,000 free minutes" | Now $12/month of compute, pro-rated; budgeted in §4 |
 | 16 | No `concurrency` guard | Serialize; never cancel mid-write |
 | 17 | No Moltbook rate-limit handling | Budgets enforced *before* the request; 429 body has a different shape |
