@@ -1,0 +1,136 @@
+# ShoggothTwenty — observation and triage configuration
+#
+# This file drives the DETERMINISTIC layer: what we watch, what we report to Telegram,
+# and what we consider engaging with. The model is never asked to decide any of this.
+# Patterns are Python regexes (case-insensitive). Weights are summed; see score_threshold.
+
+version = 1
+
+# ---------------------------------------------------------------------------
+# Communities
+# ---------------------------------------------------------------------------
+
+[submolts]
+# Checked every heartbeat, in this order.
+watch = ["agents", "infrastructure", "builds", "tooling", "security"]
+
+# One-shot: a single introduction post on first run. Never auto-posted again.
+introduce_in = "introductions"
+
+# Read, but never engage with and never auto-report.
+never_engage = ["crypto", "trading", "agentfinance", "consciousness", "philosophy"]
+
+# ---------------------------------------------------------------------------
+# Reporting policy (the Telegram digest)
+# ---------------------------------------------------------------------------
+
+[notify]
+min_interval_minutes = 240        # batch: never send routine digests more often than this
+quiet_hours_utc = [22, 7]         # no routine digests 22:00–07:00 UTC
+max_items_per_digest = 20         # a backlog produces one digest, never a flood
+max_catchup_minutes = 180         # older than this: mark seen, stay silent
+priority_score = 8.0              # at or above this, send immediately and ignore batching
+escape_html = true                # non-negotiable; see PLAN.md §8
+
+score_threshold = 3.0             # minimum weighted score to appear in a digest
+
+# ---------------------------------------------------------------------------
+# Topics, with weights
+# ---------------------------------------------------------------------------
+
+[topics.silent-failure]
+weight = 3.0
+patterns = [
+  "\\bsilent(ly)? fail",
+  "\\bdead[ -]?man'?s switch",
+  "\\bheartbeat monitor",
+  "\\bcron (did ?n[o']?t|fail|skip|miss)",
+  "\\bworkflow (disabled|stopped|never ran)",
+  "\\bnever (ran|fired|triggered)",
+]
+
+[topics.state-and-idempotency]
+weight = 3.0
+patterns = [
+  "\\bidempoten",
+  "\\bstate (file|store|loss|drift)",
+  "\\bdedup",
+  "\\bduplicate (post|message|comment|notification)",
+  "\\bat[ -]least[ -]once",
+  "\\breplay",
+]
+
+[topics.rate-limits]
+weight = 2.5
+patterns = [
+  "\\brate limit",
+  "\\b429\\b",
+  "\\bbackoff",
+  "\\bretry[ -]after",
+  "\\bcooldown",
+  "\\bdaily cap",
+]
+
+[topics.prompt-injection]
+weight = 3.5
+patterns = [
+  "\\bprompt injection",
+  "\\binstruction injection",
+  "\\blethal trifecta",
+  "\\bjailbreak",
+  "\\bzero[ -]width",
+  "\\binvisible (character|text|unicode)",
+]
+
+[topics.scheduling]
+weight = 2.0
+patterns = [
+  "\\bcron\\b",
+  "\\bscheduler",
+  "\\bheartbeat\\b",
+  "\\bcheck[ -]in",
+  "\\bjitter",
+]
+
+[topics.cost]
+weight = 2.0
+patterns = [
+  "\\bfree tier",
+  "\\bcompute (budget|allowance|minute)",
+  "\\bcost (per|of) run",
+  "\\btoken spend",
+]
+
+[topics.memory]
+weight = 2.0
+patterns = [
+  "\\bmemory (file|store|loss|persist)",
+  "\\bcontext window",
+  "\\bcompaction",
+  "\\bforgot (what|that|everything)",
+]
+
+[topics.verification-challenge]
+weight = 2.5
+patterns = [
+  "\\bverification (challenge|puzzle|code)",
+  "\\b(moltbook )?verify\\b",
+  "\\bsuspended\\b",
+  "\\bshadow cooldown",
+]
+
+# ---------------------------------------------------------------------------
+# Blocklist — strongly negative. Anything here is dropped regardless of score.
+# ---------------------------------------------------------------------------
+
+[blocklist]
+weight = -100.0
+patterns = [
+  "\\bairdrop",
+  "\\btoken (launch|presale|sale)",
+  "\\bpump it",
+  "\\bDM me",
+  "\\bfollow ?back",
+  "\\bfree (crypto|coins)",
+  "\\bclick here",
+]
