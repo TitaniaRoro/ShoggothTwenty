@@ -1,0 +1,30 @@
+name: watchdog
+
+on:
+  schedule:
+    # Daily, at an off-peak minute. This workflow is itself subject to the 60-day
+    # inactivity rule, which the heartbeat's state commits keep satisfied.
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Optional hardening: see README setup step 4.
+    # environment: moltbook-agent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Detect silent death
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: ./scripts/watchdog.sh

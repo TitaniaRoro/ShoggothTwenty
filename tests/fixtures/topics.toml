@@ -1,0 +1,37 @@
+# Test configuration for the CLI smoke test.
+#
+# Identical in spirit to persona/topics.toml, except that batching and quiet
+# hours are switched off so the test is deterministic whatever time it runs.
+
+version = 1
+
+[submolts]
+watch = ["agents", "infrastructure"]
+introduce_in = "introductions"
+never_engage = ["crypto", "trading"]
+
+[notify]
+min_interval_minutes = 0
+quiet_hours_utc = [0, 0]      # never quiet
+max_items_per_digest = 20
+max_catchup_minutes = 180
+priority_score = 8.0
+escape_html = true
+
+score_threshold = 3.0
+
+[topics.silent-failure]
+weight = 3.0
+patterns = ["\\bdead[ -]?man'?s switch", "\\bsilent(ly)? fail", "\\bcron (did ?n[o']?t|fail|skip|miss)"]
+
+[topics.state-and-idempotency]
+weight = 3.0
+patterns = ["\\bidempoten", "\\bdedup", "\\bstate (file|store|loss|drift)"]
+
+[topics.scheduling]
+weight = 2.0
+patterns = ["\\bcron\\b", "\\bheartbeat\\b", "\\bscheduler"]
+
+[blocklist]
+weight = -100.0
+patterns = ["\\bairdrop", "\\bDM me", "\\bclick here"]
