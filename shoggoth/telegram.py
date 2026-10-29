@@ -114,6 +114,50 @@ class Telegram:
                 success = False
         return success
 
+    def send_document(self, filename: str, content: str, *, caption: str = "") -> bool:
+        """Upload a file. Returns False rather than raising, like :meth:`send`.
+
+        Used for reports too long or too structured to read as a message. The
+        body is sent verbatim as ``text/markdown``; the caption is plain text
+        with no parse mode, so neither needs escaping.
+        """
+        if self.dry_run:
+            print(f"--- dry run: document {filename} ---")
+            print(content[:2000])
+            print("--- end ---")
+            return True
+
+        files = {"document": (filename, content.encode("utf-8"), "text/markdown")}
+        data: dict[str, Any] = {"chat_id": self.chat_id}
+        if caption:
+            # Document captions cap at 1024 characters.
+            data["caption"] = caption[:1024]
+
+        try:
+            response = self.session.post(
+                f"{self._base}/sendDocument", data=data, files=files, timeout=30
+            )
+        except requests.RequestException as exc:
+            log.error("Telegram document upload failed: %s", exc)
+            return False
+
+        try:
+            body = response.json()
+        except ValueError:
+            log.error("Telegram returned non-JSON (HTTP %s)", response.status_code)
+            return False
+
+        if not body.get("ok"):
+            log.error(
+                "Telegram rejected the document (HTTP %s): %s",
+                response.status_code,
+                body.get("description"),
+            )
+            return False
+
+        log.info("sent document %s (%d bytes)", filename, len(content))
+        return True
+
     def send_approval(self, text: str, proposal_id: str) -> bool:
         """Send a draft for human sign-off with Approve / Reject buttons.
 

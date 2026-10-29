@@ -64,6 +64,10 @@ class Settings:
     def instructions_path(self) -> Path:
         return self.persona_dir / "instructions.md"
 
+    @property
+    def watch_path(self) -> Path:
+        return self.persona_dir / "watch.toml"
+
     @classmethod
     def from_env(cls, *, require_moltbook: bool = True, require_telegram: bool = True) -> "Settings":
         return cls(
