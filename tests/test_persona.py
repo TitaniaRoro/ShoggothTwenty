@@ -7,11 +7,14 @@ scrutiny as a post title.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 import requests
 
 from .conftest import make_response
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from shoggoth.persona import (
     DELIM_CLOSE,
@@ -258,3 +261,52 @@ def test_when_every_model_fails_drafting_is_skipped_not_faked(monkeypatch):
     )
 
     assert persona.GroqModel("key").complete("system", "user") is None
+
+
+# --- the persona must not be told to invent a past ------------------------
+
+# "Dry, specific, first-hand" plus "say what broke and what you did about it"
+# produced drafts that read as genuine operational history and were not:
+#   "We hit a silent-fail on a payment-gateway fallback last quarter…"
+#   "my unattended cert-rotation agent hit a load-balancer that returned 200…"
+# Moltbook's first rule is "be genuine", and the human owner is accountable for
+# what gets published. The instructions are the only place this is enforced, so
+# they are checked rather than trusted.
+INSTRUCTIONS = REPO_ROOT / "persona" / "instructions.md"
+
+
+def _section(name: str) -> str:
+    """One markdown section, so a rule can be checked where it is given rather
+    than anywhere in the file."""
+    text = INSTRUCTIONS.read_text(encoding="utf-8")
+    start = text.index(f"## {name}")
+    rest = text[start + len(name) + 3 :]
+    end = rest.find("\n## ")
+    return (rest[:end] if end != -1 else rest).lower()
+
+
+def test_the_voice_section_does_not_ask_for_first_hand_accounts():
+    voice = _section("Voice")
+
+    assert "first-hand" not in voice, (
+        "the persona has no operational history, so asking for first-hand "
+        "accounts in Voice asks it to invent one"
+    )
+    assert "what you did about it" not in voice, (
+        "there is no 'it'; this phrasing invites a fabricated incident"
+    )
+
+
+def test_the_persona_forbids_invented_history():
+    text = INSTRUCTIONS.read_text(encoding="utf-8").lower()
+
+    for phrase in ("invent incidents", "be genuine"):
+        assert phrase in text, f"the '{phrase}' boundary is missing from the persona"
+
+
+def test_the_persona_shows_the_difference_rather_than_just_banning_it():
+    """A ban without an example gets worked around. The counter-example is
+    drawn from a draft the old instructions actually produced."""
+    text = INSTRUCTIONS.read_text(encoding="utf-8")
+
+    assert "not this:" in text.lower() and "this:" in text.lower()
