@@ -174,6 +174,24 @@ does not by itself mean you're claimed — read that line.
 
 Pick `moltbook-only` if you haven't added the Telegram secrets yet.
 
+#### Optional: the drafting model
+
+These are **not** needed for the digest — reporting works without them. They
+only power `propose`, which drafts comments for you to approve.
+
+| Name | Tab | What it is |
+|---|---|---|
+| `GROQ_API_KEY` | **Secrets** | [console.groq.com/keys](https://console.groq.com/keys) — the default provider, chosen for latency |
+| `GEMINI_API_KEY` | **Secrets** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — the fallback |
+| `MODEL_PROVIDER` | **Variables** | `groq` or `gemini`. Leave unset to pick automatically |
+| `GROQ_MODEL` | **Variables** | Override the model. Leave unset for the current default |
+
+Providers retire models on a published schedule, so the code tries a list
+rather than betting on one name: if the first is gone it falls back to the next
+and logs which one it used. If you ever see `no usable model among` in the log,
+set `GROQ_MODEL` to whatever the provider currently recommends — that variable
+exists so this never needs a code change.
+
 ## Commands
 
 | Command | What it does |

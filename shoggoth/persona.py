@@ -65,18 +65,65 @@ class NullModel:
         return None
 
 
+# Groq retires models on a published schedule. llama-3.3-70b-versatile was
+# switched off on 2026-08-16 with openai/gpt-oss-120b named as its
+# replacement; qwen/qwen3.6-27b, Groq's other suggestion at the time, went on
+# 2026-09-14. Hardcoding a single name means the next retirement silently
+# disables drafting while every other part of the run stays green, so these
+# are tried in order instead.
+DEFAULT_GROQ_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b")
+
+# The gpt-oss models reason before they answer, and that reasoning counts
+# against the completion budget. A low ceiling doesn't truncate the answer, it
+# can consume the whole budget on reasoning and return nothing at all.
+MAX_OUTPUT_TOKENS = 2000
+
+
+def groq_model_order(chosen: str | None = None) -> list[str]:
+    """An explicit override first, then the defaults as live fallbacks."""
+    ordered: list[str] = []
+    for candidate in (chosen or "", *DEFAULT_GROQ_MODELS):
+        candidate = candidate.strip()
+        if candidate and candidate not in ordered:
+            ordered.append(candidate)
+    return ordered
+
+
 class GroqModel:
     """Groq's OpenAI-compatible chat endpoint. Chosen for latency."""
 
     name = "groq"
 
-    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile", timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        timeout: float = 30.0,
+        max_tokens: int = MAX_OUTPUT_TOKENS,
+    ) -> None:
         self.api_key = api_key
-        self.model = model
+        self.models = groq_model_order(model)
         self.timeout = timeout
+        self.max_tokens = max_tokens
         self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
+    @property
+    def model(self) -> str:
+        return self.models[0]
+
     def complete(self, system: str, user: str) -> str | None:
+        for index, model in enumerate(self.models):
+            text = self._call(model, system, user)
+            if text:
+                if index:
+                    log.warning(
+                        "groq: %s unusable, fell back to %s", self.models[0], model
+                    )
+                return text
+        log.error("groq: no usable model among: %s", ", ".join(self.models))
+        return None
+
+    def _call(self, model: str, system: str, user: str) -> str | None:
         import requests
 
         try:
@@ -87,26 +134,38 @@ class GroqModel:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": self.model,
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
                     "temperature": 0.7,
-                    "max_tokens": 800,
+                    "max_tokens": self.max_tokens,
                 },
                 timeout=self.timeout,
             )
             body = response.json()
         except Exception as exc:  # noqa: BLE001 - a model outage must not break a run
-            log.error("groq request failed: %s", exc)
+            log.error("groq request failed for %s: %s", model, exc)
             return None
 
         try:
             return body["choices"][0]["message"]["content"].strip()
         except (KeyError, IndexError, TypeError):
-            log.error("groq returned an unexpected body: %s", str(body)[:200])
+            log.error("groq: %s produced no completion: %s", model, _groq_error(body))
             return None
+
+
+def _groq_error(body: object) -> str:
+    """Pull the provider's message out of an error body when it offers one."""
+    if not isinstance(body, dict):
+        return str(body)[:200]
+    error = body.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message") or error)[:200]
+    if error:
+        return str(error)[:200]
+    return str(body)[:200]
 
 
 class GeminiModel:
@@ -161,7 +220,9 @@ def build_model() -> Model:
     if preferred == "gemini" and gemini_key:
         return GeminiModel(gemini_key, os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
     if groq_key and preferred != "gemini":
-        return GroqModel(groq_key, os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
+        # An empty override means "use the defaults"; the explicit model is
+        # still tried first when one is set.
+        return GroqModel(groq_key, os.environ.get("GROQ_MODEL", ""))
     if gemini_key:
         return GeminiModel(gemini_key, os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
     return NullModel()
