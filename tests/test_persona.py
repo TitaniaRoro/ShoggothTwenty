@@ -9,6 +9,9 @@ from __future__ import annotations
 import os
 
 import pytest
+import requests
+
+from .conftest import make_response
 
 from shoggoth.persona import (
     DELIM_CLOSE,
@@ -155,3 +158,103 @@ def test_provider_can_be_overridden(monkeypatch):
 
 def test_null_model_returns_none_rather_than_raising():
     assert NullModel().complete("system", "user") is None
+
+
+# --- model selection survives a provider retiring a model -----------------
+
+# llama-3.3-70b-versatile was switched off on 2026-08-16. Every run stayed
+# green while drafting silently produced nothing, because the failure was a
+# 200 response with an error body rather than an exception.
+def groq_error_body(model: str) -> dict:
+    return {
+        "error": {
+            "message": f"The model `{model}` does not exist or you do not have access to it.",
+            "type": "invalid_request_error",
+            "code": "model_not_found",
+        }
+    }
+
+
+def groq_ok_body(text: str = "draft") -> dict:
+    return {"choices": [{"message": {"content": text}}]}
+
+
+def test_the_default_model_is_not_a_retired_one():
+    from shoggoth.persona import DEFAULT_GROQ_MODELS
+
+    assert "llama-3.3-70b-versatile" not in DEFAULT_GROQ_MODELS
+    assert DEFAULT_GROQ_MODELS[0] == "openai/gpt-oss-120b"
+
+
+def test_a_retired_model_falls_through_to_one_that_works(monkeypatch):
+    from shoggoth import persona
+
+    called: list[str] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        called.append(json["model"])
+        if json["model"] == "openai/gpt-oss-120b":
+            return make_response(200, groq_error_body(json["model"]))
+        return make_response(200, groq_ok_body())
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    model = persona.GroqModel("key", "openai/gpt-oss-120b")
+
+    assert model.complete("system", "user") == "draft"
+    assert called == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+
+def test_an_explicit_override_is_tried_first(monkeypatch):
+    from shoggoth import persona
+
+    monkeypatch.setattr(
+        requests, "post", lambda *a, **k: make_response(200, groq_ok_body())
+    )
+    model = persona.GroqModel("key", "my-custom-model")
+
+    assert model.complete("system", "user") == "draft"
+    assert model.model == "my-custom-model"
+    assert "my-custom-model" in model.models
+
+
+def test_the_defaults_remain_available_behind_an_override(monkeypatch):
+    from shoggoth import persona
+
+    model = persona.GroqModel("key", "my-custom-model")
+
+    assert model.models[0] == "my-custom-model"
+    assert "openai/gpt-oss-120b" in model.models
+
+
+def test_the_token_budget_leaves_room_for_reasoning(monkeypatch):
+    """gpt-oss reasons before it answers, and that reasoning is billed to the
+    completion budget. Too low a ceiling returns nothing rather than a short
+    answer."""
+    from shoggoth import persona
+
+    sent: dict = {}
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, headers=None, json=None, timeout=None: (
+            sent.update(json),
+            make_response(200, groq_ok_body()),
+        )[1],
+    )
+    persona.GroqModel("key").complete("system", "user")
+
+    assert sent["max_tokens"] >= persona.MAX_OUTPUT_TOKENS >= 1500
+
+
+def test_when_every_model_fails_drafting_is_skipped_not_faked(monkeypatch):
+    from shoggoth import persona
+
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, headers=None, json=None, timeout=None: make_response(
+            200, groq_error_body(json["model"])
+        ),
+    )
+
+    assert persona.GroqModel("key").complete("system", "user") is None
