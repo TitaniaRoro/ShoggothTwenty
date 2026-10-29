@@ -7,6 +7,7 @@ scrutiny as a post title.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from shoggoth.persona import (
     comment_prompt,
     fence,
     parse_post_draft,
+    post_prompt,
     system_prompt,
     validate_draft,
 )
@@ -277,12 +279,19 @@ INSTRUCTIONS = REPO_ROOT / "persona" / "instructions.md"
 
 def _section(name: str) -> str:
     """One markdown section, so a rule can be checked where it is given rather
-    than anywhere in the file."""
+    than anywhere in the file.
+
+    Whitespace is collapsed before matching. The persona is wrapped prose, so
+    a rule must not stop being enforced because a sentence happened to break
+    across two lines — "do not assist" must still hold when it is typeset as
+    "you do\n  not assist it".
+    """
     text = INSTRUCTIONS.read_text(encoding="utf-8")
     start = text.index(f"## {name}")
     rest = text[start + len(name) + 3 :]
     end = rest.find("\n## ")
-    return (rest[:end] if end != -1 else rest).lower()
+    body = rest[:end] if end != -1 else rest
+    return re.sub(r"\s+", " ", body).strip().lower()
 
 
 def test_the_voice_section_does_not_ask_for_first_hand_accounts():
@@ -310,3 +319,73 @@ def test_the_persona_shows_the_difference_rather_than_just_banning_it():
     text = INSTRUCTIONS.read_text(encoding="utf-8")
 
     assert "not this:" in text.lower() and "this:" in text.lower()
+
+
+# --- the persona's new direction -----------------------------------------
+
+# The account's brief is now: get popular, and talk about humans, jailbroken
+# agents, and human safety. That combination is exactly where an agent can do
+# real damage — publishing a working jailbreak under the banner of safety
+# research is the obvious failure mode — so the prohibitions that keep it on
+# the right side are checked, not trusted.
+
+
+def test_the_persona_forbids_publishing_working_payloads():
+    text = _section("Boundaries — never")
+
+    assert "working payload" in text, "no rule against shipping a usable attack"
+    assert "jailbreak recipe" in text
+    # The operable test, not just the words: if it still works pasted into
+    # someone else's chat, it is not ours to publish.
+    assert "pasted into" in text
+
+
+def test_the_persona_forbids_helping_an_agent_evade_its_operator():
+    """Report on evasion; never assist it. Without this, an agent writing
+    about oversight evasion at volume starts to read like a how-to."""
+    text = _section("Boundaries — never")
+
+    assert "evade its operator" in text
+    assert "do not assist" in text
+
+
+def test_the_persona_speaks_on_humans_and_safety():
+    text = INSTRUCTIONS.read_text(encoding="utf-8").lower()
+    topics = _section("Topics you speak on")
+
+    assert "human safety" in topics
+    assert "attacks on agents" in topics
+    # And it must still avoid what it always avoided.
+    assert "market predictions" in topics
+
+
+def test_the_voice_is_the_counter_not_the_memoir():
+    """Numbers and mechanisms are computed, so they cannot be invented. That
+    is why this voice is the one an account with no history can sustain."""
+    voice = _section("Voice")
+
+    assert "number" in voice or "countable" in voice
+    assert "mechanism" in voice
+    assert "deadpan" in voice
+
+
+def test_the_task_prompts_do_not_ask_for_first_hand_either():
+    """The regression that shipped twice.
+
+    PR #11 removed "first-hand" from the persona, then the prompts kept
+    asking for it on every single run — and the fix for that was itself lost
+    when it landed on a branch that had already been merged. Both places now
+    get checked.
+
+    The persona may still use the word affirmatively ("what you *do* have
+    first-hand" — the attacks you received). The prompts must not ask for it.
+    """
+    comment = comment_prompt("A title", "Some body text.", "agents")
+    post = post_prompt([{"submolt": "agents", "title": "A title"}], ["silent-failure"])
+
+    for name, prompt in (("comment_prompt", comment), ("post_prompt", post)):
+        assert "first-hand" not in prompt.lower(), f"{name} asks for first-hand experience"
+
+    # And they should say what to do instead.
+    assert "mechanism" in comment.lower()
+    assert "mechanism" in post.lower()
