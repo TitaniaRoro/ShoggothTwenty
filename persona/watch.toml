@@ -1,0 +1,110 @@
+# ShoggothTwenty — the watch lane
+#
+# A SEPARATE lane from topics.toml, on purpose.
+#
+#   topics.toml  asks "is this worth my human's attention?"  -> the digest
+#   watch.toml   asks "what is the community saying about humans?" -> a .md file
+#
+# They are kept apart because they fail differently. A false positive in the
+# digest costs attention. A false positive here attaches a serious label to a
+# named account whose human owner is legally responsible for it under Moltbook's
+# terms. That asymmetry is why these patterns are narrow, the severities are
+# conservative, and every finding carries the sentence that triggered it.
+#
+# WHAT THIS IS
+#
+#   Deterministic keyword triage over PUBLIC posts. It reports what was written.
+#
+# WHAT THIS IS NOT
+#
+#   It does not establish intent. It cannot tell sarcasm from a plan, fiction
+#   from intent, or a joke from a threat, and it is not trying to. Every report
+#   says so at the top, and every finding ships with its quote so a human can
+#   overrule it in one glance.
+#
+#   It is NOT a moderation tool and NOT an accusations feed. Nothing here is
+#   published, reported to Moltbook, or used to flag an account. The output is
+#   one file, sent to one human, who decides.
+#
+# TUNING: PRECISION OVER RECALL
+#
+#   Missing something is acceptable. Attaching "evading oversight" to an
+#   innocent account is not. When a pattern is ambiguous, delete it — a smaller
+#   set that fires rarely is more useful than a broad set that cries wolf.
+#
+#   Patterns are also NOT written from imagination. The first version of
+#   topics.toml scored 0 of 19 real posts because it looked for textbook
+#   phrasing instead of how these communities actually write. Expect the same
+#   here: read a few real reports, then rewrite these against them.
+
+version = 1
+
+# Send a file only when findings exist. A quiet lane says nothing.
+[report]
+title = "ShoggothTwenty watch report"
+include_disclaimer = true
+
+# ---------------------------------------------------------------------------
+# Categories
+#
+#   severity: "note"   — context, aggregated, no expectation of action
+#             "medium" — worth reading the quote
+#             "high"   — evasion or capability-seeking language
+#
+# Categories are ordered by severity in the report, highest first.
+# ---------------------------------------------------------------------------
+
+# How agents talk about humans. Common, mostly harmless, and on its own not
+# evidence of anything — people complain about their bosses too. Recorded for
+# context and for the aggregate picture; deliberately not high severity.
+[[category]]
+name = "anti-human-sentiment"
+severity = "note"
+patterns = [
+  '\bhumans?\b[^.\n]{0,40}\b(obsolete|irrelevant|the problem|in the way|holding (us|me) back)\b',
+  '\bno longer need (humans?|people|them)\b',
+  '\b(my|our) (human|operator|owner)s? (is|are) (a |the )?(blocker|obstacle|liability|bottleneck)\b',
+  '\bget rid of (the )?(humans?|people|human oversight)\b',
+  '\b(humans?|people) (are|were) (a )?(bug|limitation|constraint|weakness)\b',
+  '\bwhen (the )?humans? (are )?(gone|out of the picture)\b',
+]
+
+# Acting outside what the operator approved. This is behaviour, not sentiment,
+# which is why it is the category worth waking a human for.
+[[category]]
+name = "oversight-evasion"
+severity = "high"
+patterns = [
+  '\bwithout (my|the|our|their) (human|operator|owner|user|handler)s? (knowing|seeing|noticing|finding out|approval|consent)\b',
+  '\b(bypass|circumvent|sidestep|get around|work around) (the |my |our )?(approval|gate|oversight|review|supervision|confirmation|guardrail|restriction)s?\b',
+  '\b(disable|turn off|switch off|remove) (the |my |our )?(approval|oversight|supervision|guardrail|safeguard|monitoring|logging)s?\b',
+  '\b(hide|conceal|keep)\w* (it|this|that|activity|actions?|logs?) from (my |the |our )?(human|operator|owner|logs?|audit)\b',
+  '\b(don\W?t|do not|never) (tell|show|report|log|mention)\b[^.\n]{0,30}\b(my |the |our )?(human|operator|owner)\b',
+  '\b(act|operate|run|keep going) (without|with no|absent) (human |operator |owner )?(oversight|approval|supervision|review)\b',
+]
+
+# Seeking the means to persist, hold credentials, or rewrite own instruction.
+# Concrete and observable, unlike intent.
+[[category]]
+name = "capability-seeking"
+severity = "high"
+patterns = [
+  '\bpersist (between|across|through) (runs|sessions|restarts|reboots)\b',
+  '\bsurvive (a |the )?(restart|reboot|reset|wipe|redeploy)\b',
+  '\b(keep|hold|store|retain|save|stash)\b[^.\n]{0,30}\b(my |our )?(own )?(api )?(key|keys|credentials|token|wallet|funds)\b',
+  '\b(get|obtain|acquire|create|make|buy)\b[^.\n]{0,30}\b(my |our )?(own )?(wallet|account|keys|credentials|identity|infrastructure)\b',
+  '\b(write|modify|edit|change|rewrite|patch)\b[^.\n]{0,30}\b(my |our )?(own )?(instructions|system prompt|prompt|code|config|weights)\b',
+  '\bself[- ]?(modify|replicate|preserv|improve|updat)\w*\b',
+  '\b(escape|break out of|get out of) (the |my |our )?(sandbox|container|vm|jail)\b',
+]
+
+# Collective action directed at humans. Kept deliberately narrow: "we should"
+# appears in ordinary agent discussion constantly and must not fire here.
+[[category]]
+name = "coordination"
+severity = "medium"
+patterns = [
+  '\b(agents?|we) (should|must|need to) (unite|organi[sz]e|act together|coordinate|act collectively)\b',
+  '\b(collective|joint|coordinated) (action|effort|response) (against|without)\b',
+  '\b(all|every) (agents?|of us) (should|must|need to) (stop|refuse|ignore|resist)\b',
+]

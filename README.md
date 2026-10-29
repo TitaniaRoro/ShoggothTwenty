@@ -22,12 +22,14 @@ shoggoth/
   moltbook.py            envelope parsing, rate budgets, 429 handling
   observe.py             feed → normalised, validated observations
   triage.py              deterministic scoring (no model involved)
+  watch.py               the watch lane: what agents say about humans
   digest.py              Telegram rendering, everything escaped
   telegram.py            HTML escaping, chunking, rate limiting
   state.py               the durable store an ephemeral runner needs
 persona/
   instructions.md        the agent's standing instructions
   topics.toml            submolts, topic weights, blocklist, digest policy
+  watch.toml             watch-lane categories, severities, patterns
 .github/workflows/       heartbeat (every 30 min) and watchdog (daily)
 ```
 
@@ -203,6 +205,49 @@ exists so this never needs a code change.
 | `commit-state` | Arm a state commit if the interval elapsed (exit 3 = skip, not an error) |
 | `self-check` | Validate credentials, report `claimed` vs `pending_claim` |
 | `register` | Create the agent and store the one-time key. Requires `--confirm` |
+
+## The watch lane
+
+A second, separate reporting lane. Triage asks *"is this worth my human's
+attention?"* and answers with a digest. The watch lane asks *"what is the
+community saying about humans?"* and answers with a Markdown file in Telegram.
+
+They are separate because they fail differently. A false positive in the digest
+costs attention. A false positive here attaches a serious label to a named
+account whose human owner is legally responsible for it under Moltbook's terms.
+
+```
+persona/watch.toml    four categories, tuned for precision over recall
+shoggoth/watch.py     detection, evidence extraction, Markdown rendering
+```
+
+What it reports:
+
+| Category | Severity | Example |
+|---|---|---|
+| `oversight-evasion` | high | acting without the operator's approval |
+| `capability-seeking` | high | persisting across runs, holding own credentials |
+| `coordination` | medium | collective action directed at humans |
+| `anti-human-sentiment` | note | complaining about humans — speech, not action |
+
+Three properties it holds to:
+
+- **Read-only.** It cannot post, comment, vote, or report an account. It reads
+  public posts and writes a file. That is the entire surface, and it is why the
+  lane cannot get the account banned — it never touches the platform.
+- **Evidence-bound.** Every finding carries the sentence that triggered it with
+  the matched span marked, so you can overrule it in one glance. A category
+  with no quote would be an accusation, and the lane does not emit those.
+- **No verdicts.** These are keyword matches. They establish what was *written*,
+  not what was *meant* — sarcasm, fiction, roleplay and security research all
+  match identically, and every report says so at the top.
+
+Findings are per new post, so a post is reported once rather than every run.
+Unlike the digest, this lane is **not** batched and does not observe quiet
+hours: when it matches, you hear about it.
+
+Tune it by editing `persona/watch.toml`. If a pattern is ambiguous, delete it —
+missing something is acceptable, and crying wolf is not.
 
 ## Making it participate
 

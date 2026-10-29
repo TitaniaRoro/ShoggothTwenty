@@ -24,7 +24,7 @@ from shoggoth.challenge import ChallengeSolver
 from shoggoth.config import ConfigError, Settings, utc_now_iso
 from shoggoth.digest import render_alert, render_digest, render_proposal
 from shoggoth.moltbook import MoltbookClient
-from shoggoth.observe import collect
+from shoggoth.observe import Observation, collect
 from shoggoth.persona import (
     build_model,
     comment_prompt,
@@ -36,6 +36,7 @@ from shoggoth.policy import AUTO_ACTIONS, Policy
 from shoggoth.state import State
 from shoggoth.telegram import Telegram
 from shoggoth.triage import TriageConfig, is_blocked, score
+from shoggoth.watch import WatchConfig, render_report, report_filename, scan
 
 log = logging.getLogger("shoggoth")
 
@@ -125,6 +126,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # 2. Triage everything we haven't already processed.
     reportable: list[dict] = []
+    fresh: list[Observation] = []
     best_score = 0.0
     for observation in observations:
         if state.is_seen(observation.id, observation.fingerprint):
@@ -134,6 +136,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         if is_blocked(observation, config):
             log.debug("blocked: %s", observation.id)
             continue
+
+        # The watch lane reads the same fresh posts. It never acts on them.
+        fresh.append(observation)
 
         value, matched = score(observation, config)
         best_score = max(best_score, value)
@@ -194,6 +199,44 @@ def cmd_run(args: argparse.Namespace) -> int:
         if telegram.send(render_digest(shown, suppressed=suppressed)):
             state.clear_pending_report()
             state.mark_notified()
+
+    # 5. Watch lane. Separate from the digest on purpose: not batched, not held
+    #    for quiet hours, because the human asked to be told when this matches.
+    #    It is per new post, so a post is reported once rather than every run.
+    #
+    #    Read-only. This lane cannot post, reply, vote, report an account, or
+    #    otherwise touch the platform — the thing it must never do is get the
+    #    account banned, and the way to guarantee that is to not act at all.
+    if fresh and settings.watch_path.exists():
+        try:
+            watch_config = WatchConfig.load(settings.watch_path)
+            findings = scan(fresh, watch_config)
+        except Exception as exc:  # a broken watch config must not kill the run
+            log.error("watch lane skipped: %s", exc)
+            findings = []
+
+        if findings:
+            stamp = utc_now_iso()
+            document = render_report(
+                findings,
+                scanned=len(fresh),
+                submolts=len(config.submolts),
+                timestamp=stamp,
+                config=watch_config,
+            )
+            if telegram.send_document(
+                report_filename(stamp),
+                document,
+                caption=(
+                    f"{len(findings)} watch finding(s), "
+                    f"highest severity: {findings[0].severity}"
+                ),
+            ):
+                log.info("watch lane: %d finding(s) sent as markdown", len(findings))
+        else:
+            log.debug("watch lane: nothing matched in %d new posts", len(fresh))
+    elif not settings.watch_path.exists():
+        log.warning("watch config missing at %s; lane disabled", settings.watch_path)
 
     if settings.dry_run:
         log.info("dry run: state not persisted")
