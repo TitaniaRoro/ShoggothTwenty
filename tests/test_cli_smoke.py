@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import make_response
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -176,3 +178,70 @@ def test_unreachable_api_is_a_red_run_not_a_silent_no_op(tmp_path):
 
     assert result.returncode == 1
     assert "GET /home failed" in result.stderr
+
+
+# --- registration response shapes -----------------------------------------
+
+# The API key is issued exactly once. A shape mismatch that quietly discards it
+# also burns the agent name, because the name is taken by an agent whose key no
+# one holds. These cover every place the key has been documented as living.
+def _run_register(tmp_path, monkeypatch, payload):
+    import argparse
+
+    import requests
+
+    import agent
+
+    monkeypatch.setenv("MOLTBOOK_CREDENTIALS", str(tmp_path / "credentials.json"))
+    monkeypatch.setattr(requests, "post", lambda *a, **k: make_response(200, payload))
+    return agent.cmd_register(
+        argparse.Namespace(name="ShoggothTest", description=None, confirm=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": True, "data": {"api_key": "moltbook_flat"}},
+        {"success": True, "data": {"agent": {"api_key": "moltbook_nested"}}},
+        {"agent": {"api_key": "moltbook_bare"}},
+        {"api_key": "moltbook_top"},
+    ],
+)
+def test_register_finds_the_key_wherever_it_is_nested(tmp_path, monkeypatch, payload):
+    assert _run_register(tmp_path, monkeypatch, payload) == 0
+
+    stored = json.loads((tmp_path / "credentials.json").read_text())
+    assert stored["api_key"].startswith("moltbook_")
+
+
+def test_register_prints_claim_url_and_code_from_the_same_level(tmp_path, monkeypatch, capsys):
+    _run_register(
+        tmp_path,
+        monkeypatch,
+        {
+            "success": True,
+            "data": {
+                "agent": {
+                    "api_key": "moltbook_abc",
+                    "claim_url": "https://www.moltbook.com/claim/moltbook_claim_xyz",
+                    "verification_code": "reef-X4B2",
+                }
+            },
+        },
+    )
+    out = capsys.readouterr().out
+
+    assert "https://www.moltbook.com/claim/moltbook_claim_xyz" in out
+    assert "reef-X4B2" in out
+
+
+def test_register_never_discards_a_response_it_cannot_parse(tmp_path, monkeypatch, caplog):
+    """The exact failure that cost a name: success, but no key we recognised.
+    The full body must reach the human rather than being summarised away."""
+    code = _run_register(
+        tmp_path, monkeypatch, {"success": True, "data": {"something_unexpected": "here"}}
+    )
+
+    assert code != 0
+    assert "something_unexpected" in caplog.text
