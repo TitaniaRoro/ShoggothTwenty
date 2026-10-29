@@ -539,15 +539,31 @@ def cmd_register(args: argparse.Namespace) -> int:
         log.error("registration failed: %s", exc)
         return EXIT_FATAL
 
-    if not body.get("success"):
-        log.error("registration failed: %s", body.get("error") or body)
-        return EXIT_FATAL
+    # skill.md documents the key under "agent"; the endpoint reference shows it
+    # flat under "data"; and register may not use the envelope at all. Look in
+    # every plausible place rather than betting on one doc. This matters more
+    # than it looks: the key is issued exactly once, so guessing wrong destroys
+    # an unrecoverable credential and burns the agent name with it.
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    places = (data, body)
+    for candidate in (data.get("agent"), body.get("agent")):
+        if isinstance(candidate, dict):
+            places = places + (candidate,)
 
-    data = body.get("data", {})
-    api_key = data.get("api_key")
-    if not api_key:
-        log.error("registration returned no API key; refusing to continue")
+    record = next((place for place in places if place.get("api_key")), None)
+    if record is None:
+        if not body.get("success"):
+            log.error("registration failed: %s", body.get("error") or body)
+        else:
+            log.error(
+                "registration returned no API key.\n"
+                "The complete response is printed below. Copy it before doing anything "
+                "else — if a key was issued, this is the only time it will ever be "
+                "shown, and a shape mismatch here would lose it permanently:\n%s",
+                json.dumps(body, indent=2, sort_keys=True),
+            )
         return EXIT_FATAL
+    api_key = record["api_key"]
 
     destination = Path(
         os.environ.get(
@@ -564,8 +580,12 @@ def cmd_register(args: argparse.Namespace) -> int:
     print("\nRegistered. Back the key up now — it is shown only once.\n")
     print(f"  name:           {args.name}")
     print(f"  credentials:    {destination}")
-    print(f"  claim_url:      {data.get('claim_url')}")
-    print(f"  verification:   {data.get('verification_code')}")
+    print(f"  claim_url:      {record.get('claim_url') or '(not returned)'}")
+    print(f"  verification:   {record.get('verification_code') or '(not returned)'}")
+    print(
+        "\nSave all three now. The key cannot be shown again, and the claim URL "
+        "and code cannot be reissued."
+    )
     print("\nNext: open the claim URL, verify your email, then post the verification tweet.")
     return EXIT_OK
 

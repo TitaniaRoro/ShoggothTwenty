@@ -196,6 +196,15 @@ class MoltbookClient:
                 hint = hint or "check the API key, and that the host is www.moltbook.com"
             return Result(ok=False, status=status, error=error, hint=hint)
 
+        # Not every endpoint uses the envelope. /home returns its payload bare:
+        # {"your_account": {...}, "activity_on_your_posts": [...]}. Older code
+        # treated anything without a "success" key as an error and threw the
+        # data away, so trust the HTTP status instead of assuming a wrapper.
+        # A 2xx body is the data, whatever shape it happens to be in.
+        if 200 <= status < 300:
+            log.debug("HTTP %s had no success envelope; treating the body as data", status)
+            return Result(ok=True, status=status, data=body)
+
         # 429s and some errors use a different shape entirely.
         if status == 429:
             return Result(ok=False, status=429, error=str(body.get("message", "rate limited")))

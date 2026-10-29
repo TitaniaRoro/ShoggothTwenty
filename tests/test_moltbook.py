@@ -234,3 +234,94 @@ def test_cursor_is_never_fabricated():
     list(client.iter_posts())
 
     assert session.calls[-1][2]["params"].get("cursor") is None
+
+
+# --- responses with no success envelope -----------------------------------
+
+# Captured from the live API on 2026-10-29. /home does NOT use the
+# {"success": true, "data": {...}} envelope the endpoint reference describes;
+# it returns the payload bare. An earlier _parse rejected anything without a
+# "success" key, so every heartbeat failed with "unexpected response" even
+# though the data had arrived intact.
+REAL_HOME_WITHOUT_ENVELOPE = {
+    "your_account": {
+        "name": "shoggothtwentybot",
+        "karma": 0,
+        "unread_notification_count": 0,
+    },
+    "activity_on_your_posts": [],
+    "latest_moltbook_announcement": {"post_id": "8c1d6f0e-457e-4ac0-b6c6-7747185cf000"},
+}
+
+
+def test_home_without_a_success_envelope_is_data_not_an_error():
+    """The regression that broke every heartbeat. The fixture hid it by using
+    the envelope, so the suite passed while the live API did not."""
+    client, _ = client_with(make_response(200, REAL_HOME_WITHOUT_ENVELOPE))
+
+    result = client.get_home()
+
+    assert result.ok, result.error
+    assert result.data["your_account"]["name"] == "shoggothtwentybot"
+    assert result.data["latest_moltbook_announcement"]["post_id"].startswith("8c1d6f0e")
+
+
+def test_a_bare_home_payload_survives_collect():
+    """collect() treats a failed /home as a broken heartbeat, so parse failure
+    here is fatal rather than merely noisy."""
+    from shoggoth.observe import collect
+
+    client, _ = client_with(
+        make_response(200, REAL_HOME_WITHOUT_ENVELOPE),
+        make_response(200, {"success": True, "data": {"posts": [], "has_more": False}}),
+    )
+
+    observations = collect(client, make_settings(), ["general"], max_pages=1)
+
+    assert observations == []
+
+
+def test_the_envelope_still_wins_when_it_is_present():
+    client, _ = client_with(make_response(200, {"success": True, "data": {"status": "claimed"}}))
+
+    result = client.get_agent_status()
+
+    assert result.ok
+    assert result.data["status"] == "claimed"
+
+
+def test_agents_status_also_parses_without_an_envelope():
+    """skill.md documents /agents/status as a bare {"status": ...}."""
+    client, _ = client_with(make_response(200, {"status": "pending_claim"}))
+
+    result = client.get_agent_status()
+
+    assert result.ok
+    assert result.data["status"] == "pending_claim"
+
+
+def test_a_409_stays_an_error_even_though_it_has_useful_looking_fields():
+    """The name-taken response. 409 is not 2xx, so it must never become data."""
+    body = {
+        "statusCode": 409,
+        "message": "Agent name already taken",
+        "path": "/api/v1/agents/register",
+        "error": "Conflict",
+    }
+    client, _ = client_with(make_response(409, body))
+
+    result = client.request("POST", "/agents/register", json={"name": "x"})
+
+    assert not result.ok
+    assert result.status == 409
+    assert result.data == {}
+
+
+def test_posts_paginate_whether_or_not_the_envelope_is_used():
+    """/home turned out to be bare, so /posts may be too. Pagination must not
+    depend on which shape a given endpoint happens to send."""
+    client, _ = client_with(
+        make_response(200, {"posts": [{"id": "p1"}, {"id": "p2"}], "has_more": False})
+    )
+
+    assert [post["id"] for post in client.iter_posts(submolt="general")] == ["p1", "p2"]
