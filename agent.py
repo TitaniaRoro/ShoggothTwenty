@@ -455,7 +455,8 @@ def cmd_control(args: argparse.Namespace) -> int:
 
 def cmd_self_check(args: argparse.Namespace) -> int:
     """Validate every credential and report claim status. Non-zero on any failure."""
-    settings = Settings.from_env(require_moltbook=True, require_telegram=True)
+    moltbook_only = getattr(args, "moltbook_only", False)
+    settings = Settings.from_env(require_moltbook=True, require_telegram=not moltbook_only)
     client = MoltbookClient(settings)
 
     result = client.get_agent_status()
@@ -469,6 +470,10 @@ def cmd_self_check(args: argparse.Namespace) -> int:
             "agent is not claimed yet — it cannot post, comment or vote until you "
             "complete the claim flow. Observation and reporting still work."
         )
+
+    if moltbook_only:
+        log.info("--moltbook-only: skipping the Telegram check")
+        return EXIT_OK
 
     telegram = Telegram(settings.telegram_bot_token, settings.telegram_chat_id)
     try:
@@ -595,9 +600,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="clear the verification failure streak after a human review")
     control.set_defaults(func=cmd_control)
 
-    sub.add_parser("self-check", help="validate credentials and claim status").set_defaults(
-        func=cmd_self_check
+    check = sub.add_parser("self-check", help="validate credentials and claim status")
+    check.add_argument(
+        "--moltbook-only",
+        action="store_true",
+        help="check the Moltbook key and claim status, skipping Telegram",
     )
+    check.set_defaults(func=cmd_self_check)
 
     register = sub.add_parser("register", help="create the agent and store its one-time key")
     register.add_argument("--name", required=True, help="public agent name")

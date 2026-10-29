@@ -69,10 +69,60 @@ do but can defer.
 |---|---|
 | `MOLTBOOK_API_KEY` | Printed once at registration (`agent.py register`), and stored at `~/.config/moltbook/credentials.json`. It is shown **exactly once** — if you lose it, the agent has to be re-registered |
 | `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather), after `/newbot` |
-| `TELEGRAM_CHAT_ID` | Message [@userinfobot](https://t.me/userinfobot); it replies with your id. A private chat is positive; a group or channel id is negative |
+| `TELEGRAM_CHAT_ID` | From `getUpdates` — see below. A private chat is positive; a group or channel id is **negative** |
 
 Nothing else needs configuring, and none of these are ever written to the
 repository.
+
+#### Getting the two Telegram values
+
+Neither step needs a terminal.
+
+**The bot token** — do this in the Telegram app:
+
+1. Search for [@BotFather](https://t.me/BotFather) and check for the **blue
+   verified tick** before you interact with it.
+2. Send `/start`, then `/newbot`.
+3. It asks for a **display name** — anything, e.g. `Shoggoth Twenty`. This is
+   only what shows in the chat header.
+4. It asks for a **username**. This must be unique across all of Telegram and
+   must end in `bot` or `_bot`, e.g. `shoggoth_twenty_bot`.
+5. BotFather replies with a token that looks like
+   `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`. Copy the whole thing,
+   including the part before the colon.
+
+That token is the bot. Anyone holding it can send messages as your bot, so it
+goes in a secret and nowhere else. If it ever leaks, `/revoke` in BotFather
+issues a new one.
+
+**The chat ID** — do this in a browser:
+
+1. In Telegram, open your new bot (`t.me/your_bot_username`) and send it any
+   message, e.g. `/start`. **This step is not optional** — until you message the
+   bot, it has no chat with you and there is no ID to find.
+2. In a browser, open this URL with your real token substituted in — no angle
+   brackets, no spaces:
+
+   ```
+   https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
+   ```
+
+3. You'll get JSON back. Find the `chat` object and take its `id`:
+
+   ```json
+   {"chat": {"id": 123456789, "first_name": "...", "type": "private"}}
+   ```
+
+   That number is your chat ID.
+
+If `"result": []` comes back empty, you skipped step 1 — go message the bot and
+reload.
+
+**Use a private chat unless you have a reason not to.** A group works, but its
+ID is negative (e.g. `-1001234567890`), and bots in groups default to *privacy
+mode*, which hides ordinary messages from `getUpdates` — so the group ID can be
+invisible until you send `/setprivacy` to BotFather and pick **Disable**. A
+private chat has none of that. Approval buttons work the same either way.
 
 ### 2. Confirm Actions is enabled
 
@@ -104,6 +154,25 @@ workflow*. It should complete green and print a digest in the log without
 sending anything to Telegram. Then run it again unchecked to get a real message.
 
 Unchecking `dry_run` is the only difference between "prints it" and "sends it".
+
+### 6. Claim the agent (browser only — no terminal needed)
+
+Registering created the agent; **claiming** is what links it to you as the
+accountable human, and nothing can post until you do. It's two browser steps:
+
+1. Open the `claim_url` you got at registration
+   (`https://www.moltbook.com/claim/moltbook_claim_...`) and verify your email.
+2. Post a tweet containing the `verification_code` (it looks like `reef-X4B2`).
+
+Both the claim URL and the code were shown **once**, at registration, and there
+is no documented endpoint to retrieve them. If you lost them, the only way
+forward is to register a new agent under a new name.
+
+To check where you stand: **Actions → status → Run workflow** → *Run workflow*.
+Read the log line saying `status=pending_claim` or `status=claimed`. A green run
+does not by itself mean you're claimed — read that line.
+
+Pick `moltbook-only` if you haven't added the Telegram secrets yet.
 
 ## Commands
 

@@ -1,0 +1,80 @@
+name: status
+
+# A button, not a schedule. This exists so the setup steps that need a terminal
+# can be done from the Actions tab instead: check whether the Moltbook key works,
+# see whether the agent is claimed, and confirm the Telegram bot is reachable.
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: 'What to check'
+        type: choice
+        default: all
+        options:
+          - all
+          - moltbook-only
+
+permissions:
+  contents: read   # this workflow only reads; it never commits state
+
+concurrency:
+  group: status
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install --require-hashes -r requirements.txt
+
+      - name: Check credentials and claim status
+        env:
+          MOLTBOOK_API_KEY: ${{ secrets.MOLTBOOK_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ inputs.check }}" = "moltbook-only" ]; then
+            python agent.py self-check --moltbook-only
+          else
+            python agent.py self-check
+          fi
+
+      # Runs even when the check above fails, because "the key is wrong" and
+      # "you haven't claimed yet" are different problems with different fixes.
+      - name: What the claim status means
+        if: always()
+        run: |
+          cat <<'EOF'
+          pending_claim -> the agent exists and the key works, but no human has
+                           claimed it. It can read and it can report to you, but
+                           every write (post, comment, vote) will be refused.
+
+                           To claim it, open the claim URL you got at
+                           registration. It looks like:
+                             https://www.moltbook.com/claim/moltbook_claim_xxx
+
+                           Then verify your email, then post a tweet containing
+                           the verification code (it looked like "reef-X4B2").
+                           Both steps happen in a browser - no terminal needed.
+
+                           The claim URL and code were shown ONCE, at
+                           registration. There is no documented endpoint to get
+                           them back, so if you lost them the only way forward is
+                           to register a new agent under a new name.
+
+          claimed       -> you're done. Writes will work.
+
+          If this step is the only thing you read: a green run here does NOT mean
+          you are claimed. Read the log line saying "status=pending_claim" or
+          "status=claimed".
+          EOF
