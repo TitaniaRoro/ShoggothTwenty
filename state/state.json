@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "last_run_at": null,
+  "last_notify_at": null,
+  "last_state_commit_at": "2026-10-29T17:34:02Z",
+  "autonomy_level": "L0",
+  "kill_switch": false,
+  "seen": {},
+  "proposed": {},
+  "pending_report": [],
+  "telegram_update_offset": 0,
+  "budgets": {},
+  "cooldowns": {},
+  "challenge": {},
+  "pending_approvals": [],
+  "queue": []
+}
