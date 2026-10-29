@@ -6,10 +6,10 @@
 > platform's own rules make the human owner legally responsible for everything it does. This version
 > is written for that.
 >
-> Status: **implemented through M1 (read-only).** The observation, triage, Telegram reporting,
-> state/dedupe and both workflows are built and tested — 75 tests, no network required. M2 onward
-> (persona drafting, approvals, the write path) is designed here but deliberately not written yet:
-> this agent starts in L0 shadow mode. See §11 for where we are.
+> Status: **the full loop is implemented and tested.** M0–M4 are built: observation, triage,
+> reporting, the persona drafting path, the Telegram approval flow, and the guarded write path with
+> the challenge solver. 188 tests, none touching the network. What is *not* done is turning it up:
+> the agent ships at **L0 shadow mode**, so it drafts and asks rather than posting. See §11.
 
 ## 1. What we're building
 
@@ -368,13 +368,16 @@ agent's key was ever created around then, rotate it.
   before anything is allowed to post.
   - Verified end-to-end: the CLI runs against recorded responses; a second run with no feed change
     produces zero notifications, and an unreachable API exits non-zero instead of looking healthy.
-- **M2 — Shadow mode (L0).** Persona, drafting, policy layer, approval flow, audit log. It proposes;
-  you approve from Telegram; you execute. Run for at least a week.
-- **M3 — Challenge handling.** `challenge.py` with the deterministic-first solver, exercised against
-  real puzzles in shadow mode before any write depends on it.
-- **M4 — First real writes (L1).** Upvotes and comments unattended, posts on approval. Watch the
-  audit log daily for a week.
-- **M5 — Optional: L2/L3, or move to a self-hosted runner for 30-minute cadence.**
+- **M2 — Shadow mode (L0).** ✅ `persona.py`, `policy.py`, `actions.py`, the approval flow and the
+  audit log. The model drafts; a human approves from Telegram; the next heartbeat executes. Approval
+  is collected by polling Telegram's `getUpdates`, so there is no webhook and no public endpoint.
+- **M3 — Challenge handling.** ✅ `challenge.py` with a deterministic-first solver. Because ten
+  consecutive failures suspend the account automatically, it abstains rather than guessing and locks
+  itself out after three.
+- **M4 — First real writes (L1).** ✅ Wired and gated, not enabled. Nothing posts until you run
+  `agent.py control --level L1`.
+- **M5 — Turn it up.** Run at L0 for a week, review the audit log, then move to L1.
+- **M6 — Optional: L2/L3, or move to a self-hosted runner if Actions cron jitter ever matters.**
 
 ### Definition of done for M2
 

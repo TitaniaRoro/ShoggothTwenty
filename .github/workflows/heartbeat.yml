@@ -30,7 +30,12 @@ jobs:
     steps:
       # Pinned to commit SHAs: this repo is public and holds secrets, so a
       # mutable tag on a third-party action is an unnecessary risk.
+      # persist-credentials is explicit, not inherited: the state commit at the
+      # end of this job pushes back to the repo, so it needs a working credential
+      # regardless of what checkout's default happens to be this major version.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -47,6 +52,20 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: python agent.py run
+
+      # Shadow mode. The agent drafts what it would say and sends it to Telegram
+      # for approval; nothing is posted to Moltbook until a human taps Approve.
+      # With no model key configured this is a no-op that logs and exits zero.
+      - name: Propose actions for approval
+        env:
+          MOLTBOOK_API_KEY: ${{ secrets.MOLTBOOK_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: python agent.py propose --max-drafts 3
 
       # Exit 3 means "interval not elapsed" — not an error, just nothing to do.
       # Runs with always() so a broken heartbeat can't also kill the keepalive.

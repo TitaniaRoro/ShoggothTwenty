@@ -4,11 +4,11 @@ A Moltbook agent that runs 24/7 on free tiers: it watches specific submolts and
 topics, reports what's being discussed to Telegram, and — once it's earned that
 trust — participates as a defined persona.
 
-**Status: early.** The read-only half is built and tested (`run`, `bootstrap`,
-`self-check`). The participating half is designed but deliberately not written
-yet: this agent starts in **L0 shadow mode**, where it proposes and a human
-approves, because Moltbook's terms make the owner solely responsible for
-everything the agent publishes.
+**Status: the full loop is built and tested.** It observes and reports, and it
+can participate — but it starts in **L0 shadow mode**, where it drafts what it
+would say and a human approves from Telegram before anything is published.
+Moltbook's terms make the owner solely responsible for everything the agent
+publishes, so nothing posts unattended until you decide otherwise.
 
 See [`PLAN.md`](PLAN.md) for the reasoning, the platform constraints and the
 autonomy ladder.
@@ -110,10 +110,44 @@ Unchecking `dry_run` is the only difference between "prints it" and "sends it".
 | Command | What it does |
 |---|---|
 | `run` | One heartbeat: observe → triage → report to Telegram. Read-only |
+| `propose` | **Shadow mode.** Draft what the agent would say, send it to Telegram with Approve/Reject buttons, and execute anything already approved |
+| `control` | Set the autonomy level, flip the kill switch, clear a challenge streak |
 | `bootstrap` | Mark the current feed head as seen, so a cold start doesn't flood you |
 | `commit-state` | Arm a state commit if the interval elapsed (exit 3 = skip, not an error) |
 | `self-check` | Validate credentials, report `claimed` vs `pending_claim` |
 | `register` | Create the agent and store the one-time key. Requires `--confirm` |
+
+## Making it participate
+
+The write path exists, but the guardrails around it are the point:
+
+```bash
+python agent.py control --level L0     # start here: draft everything, post nothing
+python agent.py propose                # drafts land in Telegram with Approve / Reject
+```
+
+| Level | Unattended | Needs your tap |
+|---|---|---|
+| **L0** | Nothing | Everything |
+| **L1** | Upvotes, comments | Posts |
+| **L2** | Comments and posts, within budgets | Anything outside its declared topics |
+| **L3** | Everything within budgets | Nothing — you get a daily digest and review after the fact |
+
+```bash
+python agent.py control --kill         # emergency brake, works with no credentials
+python agent.py control --unkill
+```
+
+Approvals are collected by polling Telegram's `getUpdates` at the start of each
+heartbeat, so there's no webhook, no public endpoint and no long-lived process.
+
+Two things the write path refuses to do, on purpose:
+
+- **Guess at a verification challenge.** Ten consecutive failures suspend the
+  account automatically, so the solver abstains rather than answering when it
+  can't parse the puzzle, and locks itself out entirely after **three**.
+- **Create submolts.** Some of those challenges allow only 30 seconds, which is
+  not a window an unattended batch job should bet on.
 
 ## Non-negotiables
 

@@ -53,3 +53,27 @@ def render_digest(items: list[dict[str, Any]], *, suppressed: int = 0) -> str:
 def render_alert(title: str, detail: str) -> str:
     """Render an operational alert: failures, suspension risk, escalation."""
     return f"⚠️ <b>{escape_html(title)}</b>\n\n{escape_html(detail)}"
+
+
+def render_proposal(observation, draft_text: str, score_value: float, proposal_id: str) -> str:
+    """Render a draft for human approval.
+
+    The draft came from a model that read untrusted content, so it is escaped
+    exactly like a post title would be.
+    """
+    submolt = escape_html(observation.submolt)
+    title = escape_html(observation.title) or "(untitled)"
+    body = escape_html(draft_text)
+
+    lines = [
+        "✍️ <b>Proposed comment</b>",
+        "",
+        f"On: <b>m/{submolt}</b> — {title}",
+        f"Match score: {score_value:.1f} · id <code>{escape_html(proposal_id)}</code>",
+        "",
+        body,
+    ]
+    url = getattr(observation, "url", None)
+    if url:
+        lines += ["", f"<a href=\"{safe_href(url)}\">open on Moltbook</a>"]
+    return "\n".join(lines)
