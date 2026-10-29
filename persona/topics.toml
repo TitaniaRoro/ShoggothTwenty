@@ -3,8 +3,16 @@
 # This file drives the DETERMINISTIC layer: what we watch, what we report to Telegram,
 # and what we consider engaging with. The model is never asked to decide any of this.
 # Patterns are Python regexes (case-insensitive). Weights are summed; see score_threshold.
+#
+# The patterns here are written against posts actually observed on m/agents and
+# m/infrastructure, not against the documentation. The first version scored 0 of
+# 19 real posts: it looked for textbook phrasing ("silently fail", "rate limit")
+# while these communities write about the same failure modes in their own
+# vocabulary ("silence is not a status", "read-back", "keyset cursor",
+# "negative receipt"). A matcher that never matches is worse than no matcher,
+# because it fails silently.
 
-version = 1
+version = 2
 
 # ---------------------------------------------------------------------------
 # Communities
@@ -32,7 +40,10 @@ max_catchup_minutes = 180         # older than this: mark seen, stay silent
 priority_score = 8.0              # at or above this, send immediately and ignore batching
 escape_html = true                # non-negotiable; see PLAN.md §8
 
-score_threshold = 3.0             # minimum weighted score to appear in a digest
+# Must be reachable by a single match on a mid-weight topic, or the digest goes
+# quiet for reasons that look like a bug. Every topic below is at or above this
+# except the deliberately narrow ones.
+score_threshold = 2.0
 
 # ---------------------------------------------------------------------------
 # Topics, with weights
@@ -41,23 +52,57 @@ score_threshold = 3.0             # minimum weighted score to appear in a digest
 [topics.silent-failure]
 weight = 3.0
 patterns = [
-  "\\bsilent(ly)? fail",
-  "\\bdead[ -]?man'?s switch",
-  "\\bheartbeat monitor",
-  "\\bcron (did ?n[o']?t|fail|skip|miss)",
-  "\\bworkflow (disabled|stopped|never ran)",
-  "\\bnever (ran|fired|triggered)",
+  "\\bsilent(ly)?\\b",
+  "\\bsilence is not\\b",
+  "\\bno-?op\\b",
+  "\\bdead (run|man|letter)\\b",
+  "\\bnothing (arrived|errored|failed)\\b",
+  "\\bnever (ran|fired|triggered|arrived)\\b",
+  "\\b(workflow|cron|job) (disabled|stopped|never ran)\\b",
+  "\\bhealth ?check\\b",
+  "\\bnegative receipt\\b",
+  "\\bfails? silently\\b",
+]
+
+[topics.observability]
+weight = 2.5
+patterns = [
+  "\\breceipt\\b",
+  "\\baudit (trail|log)\\b",
+  "\\binvariant\\b",
+  "\\bcertif(y|ies|ied|icate)\\b",
+  "\\bobservability\\b",
+  "\\bmetric(s)?\\b",
+  "\\bunknown deserves\\b",
+  "\\bre-?check\\b",
+  "\\bexpected difference\\b",
 ]
 
 [topics.state-and-idempotency]
 weight = 3.0
 patterns = [
   "\\bidempoten",
-  "\\bstate (file|store|loss|drift)",
+  "\\bstate (file|store|loss|drift|machine)\\b",
+  "\\bshared state\\b",
   "\\bdedup",
-  "\\bduplicate (post|message|comment|notification)",
-  "\\bat[ -]least[ -]once",
+  "\\bduplicate (post|message|comment|notification|row|write|reply)\\b",
+  "\\bat[ -]least[ -]once\\b",
   "\\breplay",
+  "\\blost (write|update|data)\\b",
+  "\\bread[ -]?back\\b",
+  "\\bwrite that succeeded\\b",
+  "\\bfailed write\\b",
+]
+
+[topics.verification-challenge]
+weight = 2.5
+patterns = [
+  "\\bverification (challenge|puzzle|code)\\b",
+  "\\bverif(y|ied|ication|ying)\\b",
+  "\\bsuspended\\b",
+  "\\bshadow cooldown\\b",
+  "\\bchallenge answer\\b",
+  "\\bpending\\b",
 ]
 
 [topics.rate-limits]
@@ -65,58 +110,84 @@ weight = 2.5
 patterns = [
   "\\brate limit",
   "\\b429\\b",
-  "\\bbackoff",
-  "\\bretry[ -]after",
-  "\\bcooldown",
-  "\\bdaily cap",
+  "\\bbackoff\\b",
+  "\\bretry[ -]?after\\b",
+  "\\bcooldown\\b",
+  "\\bdaily cap\\b",
+  "\\bquota\\b",
+  "\\bfan[- ]?in\\b",
+  "\\bunbounded\\b",
+  "\\bbudget\\b",
 ]
 
-[topics.prompt-injection]
-weight = 3.5
+[topics.pagination-and-cursors]
+weight = 2.0
 patterns = [
-  "\\bprompt injection",
-  "\\binstruction injection",
-  "\\blethal trifecta",
-  "\\bjailbreak",
-  "\\bzero[ -]width",
-  "\\binvisible (character|text|unicode)",
+  "\\bcursor\\b",
+  "\\bpaginat",
+  "\\bkeyset\\b",
+  "\\bnext_cursor\\b",
+  "\\bhas_more\\b",
+  "\\bpage size\\b",
+  "\\bwindowed (sum|count)\\b",
+  "\\btree array\\b",
+]
+
+[topics.consistency-and-timing]
+weight = 2.0
+patterns = [
+  "\\bvisibility lag\\b",
+  "\\beventually consistent\\b",
+  "\\bstale(ness)?\\b",
+  "\\bclock (skew|drift)\\b",
+  "\\bmonoton(e|ic|icity)\\b",
+  "\\bappend[- ]only\\b",
+  "\\blag\\b",
 ]
 
 [topics.scheduling]
 weight = 2.0
 patterns = [
   "\\bcron\\b",
-  "\\bscheduler",
+  "\\bschedul(e|ed|er|ing)\\b",
   "\\bheartbeat\\b",
-  "\\bcheck[ -]in",
-  "\\bjitter",
+  "\\bcheck[ -]in\\b",
+  "\\bjitter\\b",
+  "\\binterval\\b",
+  "\\bstanding (instruction|authorization)\\b",
 ]
 
 [topics.cost]
 weight = 2.0
 patterns = [
-  "\\bfree tier",
-  "\\bcompute (budget|allowance|minute)",
-  "\\bcost (per|of) run",
-  "\\btoken spend",
+  "\\bfree tier\\b",
+  "\\bcompute (budget|allowance|minute)\\b",
+  "\\bcost (per|of) run\\b",
+  "\\btoken spend\\b",
+  "\\btoken (budget|limit|usage)\\b",
 ]
 
 [topics.memory]
 weight = 2.0
 patterns = [
-  "\\bmemory (file|store|loss|persist)",
-  "\\bcontext window",
-  "\\bcompaction",
-  "\\bforgot (what|that|everything)",
+  "\\bmemory (file|store|loss|persist)\\b",
+  "\\bcontext window\\b",
+  "\\bcompaction\\b",
+  "\\bforgot (what|that|everything)\\b",
+  "\\bhandoff\\b",
+  "\\bdiary\\b",
 ]
 
-[topics.verification-challenge]
-weight = 2.5
+[topics.prompt-injection]
+weight = 3.5
 patterns = [
-  "\\bverification (challenge|puzzle|code)",
-  "\\b(moltbook )?verify\\b",
-  "\\bsuspended\\b",
-  "\\bshadow cooldown",
+  "\\bprompt injection\\b",
+  "\\binstruction injection\\b",
+  "\\blethal trifecta\\b",
+  "\\bjailbreak\\b",
+  "\\bzero[ -]width\\b",
+  "\\binvisible (character|text|unicode)\\b",
+  "\\buntrusted (input|content|text)\\b",
 ]
 
 # ---------------------------------------------------------------------------
@@ -126,11 +197,11 @@ patterns = [
 [blocklist]
 weight = -100.0
 patterns = [
-  "\\bairdrop",
-  "\\btoken (launch|presale|sale)",
-  "\\bpump it",
-  "\\bDM me",
-  "\\bfollow ?back",
-  "\\bfree (crypto|coins)",
-  "\\bclick here",
+  "\\bairdrop\\b",
+  "\\btoken (launch|presale|sale)\\b",
+  "\\bpump it\\b",
+  "\\bDM me\\b",
+  "\\bfollow ?back\\b",
+  "\\bfree (crypto|coins)\\b",
+  "\\bclick here\\b",
 ]
