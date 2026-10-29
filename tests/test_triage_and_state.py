@@ -196,3 +196,21 @@ def test_buffered_items_are_not_duplicated():
     state.add_pending_report({"id": "a", "first_seen": utc_now_iso()})
 
     assert len(state.pending_report) == 1
+
+
+def test_proposals_are_remembered_so_we_never_ask_twice():
+    state = State()
+
+    assert not state.already_proposed("post-1")
+    state.mark_proposed("post-1")
+    assert state.already_proposed("post-1")
+
+
+def test_proposed_ring_is_bounded():
+    from shoggoth.state import MAX_SEEN
+
+    state = State()
+    for index in range(MAX_SEEN):
+        state.mark_proposed(f"post-{index:05d}")
+
+    assert len(state.proposed) <= MAX_SEEN // 2

@@ -39,8 +39,13 @@ class State:
 
     # id -> updated_at of the post as we last saw it
     seen: dict[str, str] = field(default_factory=dict)
+    # Posts we have already drafted something for, so we don't ask twice.
+    proposed: dict[str, str] = field(default_factory=dict)
     # Scored items waiting to go out in the next digest
     pending_report: list[dict[str, Any]] = field(default_factory=list)
+
+    # Telegram getUpdates offset: persist it or approvals get replayed or lost.
+    telegram_update_offset: int = 0
 
     budgets: dict[str, Any] = field(default_factory=dict)
     cooldowns: dict[str, float] = field(default_factory=dict)
@@ -108,6 +113,21 @@ class State:
         ordered = sorted(self.seen.items(), key=lambda kv: kv[1], reverse=True)
         self.seen = dict(ordered[:MAX_SEEN])
         log.info("pruned seen-store to %d entries", len(self.seen))
+
+    # -- proposal bookkeeping ---------------------------------------------
+
+    def already_proposed(self, post_id: str) -> bool:
+        return post_id in self.proposed
+
+    def mark_proposed(self, post_id: str) -> None:
+        self.proposed[post_id] = utc_now_iso()
+        self.prune_proposed()
+
+    def prune_proposed(self) -> None:
+        if len(self.proposed) <= MAX_SEEN // 2:
+            return
+        ordered = sorted(self.proposed.items(), key=lambda kv: kv[1], reverse=True)
+        self.proposed = dict(ordered[: MAX_SEEN // 2])
 
     # -- reporting buffer -------------------------------------------------
 
