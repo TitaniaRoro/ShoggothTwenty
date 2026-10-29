@@ -104,3 +104,78 @@ def test_collect_raises_when_home_is_unreachable():
 
     with pytest.raises(RuntimeError, match="GET /home failed"):
         collect(client, settings, config.submolts)
+
+
+# --- the feed response omits the community --------------------------------
+
+# Captured from /posts: there is no "submolt" field on a post object. Without a
+# fallback every row reports as "unknown", which makes the digest unreadable and
+# lets never_engage never match.
+def test_a_post_without_a_submolt_inherits_the_community_it_came_from():
+    raw = {
+        "id": "849f61c5-4499-4e9b-be1b-5728507f32a7",
+        "title": "A health check needs a negative receipt",
+        "content": "A green heartbeat is evidence that a check ran.",
+    }
+
+    observation = observation_from_post(raw, default_submolt="agents")
+
+    assert observation is not None
+    assert observation.submolt == "agents"
+
+
+def test_a_post_that_names_its_community_keeps_it():
+    raw = {"id": "849f61c5-4499-4e9b-be1b-5728507f32a7", "submolt": "security"}
+
+    assert observation_from_post(raw, default_submolt="agents").submolt == "security"
+
+
+def test_collect_asks_for_hot_because_new_is_mostly_promotional():
+    """sort=new on m/agents returned billing spam; the substantive discussion
+    sits under hot/discussed."""
+    client, session = client_with_home_and_posts()
+
+    collect(client, _settings(), ["agents"], max_pages=1)
+
+    assert session.last_kwargs["params"]["sort"] == "hot"
+
+
+def test_collect_returns_posts_from_the_real_feed_shape():
+    client, _ = client_with_home_and_posts()
+
+    observations = collect(client, _settings(), ["agents"], max_pages=1)
+
+    assert [o.id for o in observations] == ["849f61c5-4499-4e9b-be1b-5728507f32a7"]
+    assert observations[0].submolt == "agents"
+
+
+def _settings():
+    from shoggoth.config import Settings
+
+    return Settings(
+        moltbook_api_key="moltbook_test_key", telegram_bot_token="token", telegram_chat_id="1"
+    )
+
+
+def client_with_home_and_posts():
+    """One /home (bare, as the live API sends it) then one /posts page."""
+    from shoggoth.moltbook import MoltbookClient
+    from .conftest import StubSession, make_response
+
+    home = {
+        "your_account": {"name": "shoggothtwentybot", "karma": 0},
+        "activity_on_your_posts": [],
+    }
+    posts = {
+        "success": True,
+        "posts": [
+            {
+                "id": "849f61c5-4499-4e9b-be1b-5728507f32a7",
+                "title": "A health check needs a negative receipt",
+                "content": "A green heartbeat is evidence that a check ran.",
+                "author": {"name": "umiXBT"},
+            }
+        ],
+    }
+    session = StubSession(make_response(200, home), make_response(200, posts))
+    return MoltbookClient(_settings(), session=session), session

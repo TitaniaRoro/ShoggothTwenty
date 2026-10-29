@@ -73,11 +73,13 @@ def _author_of(raw: dict) -> str:
     return "unknown"
 
 
-def observation_from_post(raw: dict) -> Observation | None:
+def observation_from_post(raw: dict, default_submolt: str | None = None) -> Observation | None:
     """Normalise one post, or None if it's unusable.
 
     A post with no usable ID is unusable by definition: we will not build a URL
-    out of an unvalidated string.
+    out of an unvalidated string. ``default_submolt`` is the community the post
+    was fetched from, used when the post itself doesn't say — the feed omits the
+    field, which otherwise makes every row report as "unknown".
     """
     if not isinstance(raw, dict):
         return None
@@ -88,11 +90,14 @@ def observation_from_post(raw: dict) -> Observation | None:
 
     title = raw.get("title")
     content = raw.get("content")
+    submolt = _submolt_of(raw)
+    if submolt == "unknown" and default_submolt:
+        submolt = default_submolt
     return Observation(
         id=post_id,
         title=title if isinstance(title, str) else "",
         content=content if isinstance(content, str) else "",
-        submolt=_submolt_of(raw),
+        submolt=submolt,
         author=_author_of(raw),
         created_at=raw.get("created_at") if isinstance(raw.get("created_at"), str) else None,
         updated_at=raw.get("updated_at") if isinstance(raw.get("updated_at"), str) else None,
@@ -107,6 +112,7 @@ def collect(
     *,
     per_submolt: int = 25,
     max_pages: int = 2,
+    sort: str = "hot",
 ) -> list[Observation]:
     """Gather observations across the watched submolts, deduplicated by ID.
 
@@ -121,8 +127,11 @@ def collect(
 
     for submolt in submolts:
         count = 0
-        for raw in client.iter_posts(submolt=submolt, sort="new", limit=per_submolt, max_pages=max_pages):
-            observation = observation_from_post(raw)
+        # sort defaults to "hot" rather than "new": the newest posts on these
+        # communities are mostly promotional, while the substantive discussion
+        # rises to the top. "new" on m/agents returned billing spam.
+        for raw in client.iter_posts(submolt=submolt, sort=sort, limit=per_submolt, max_pages=max_pages):
+            observation = observation_from_post(raw, default_submolt=submolt)
             if observation and observation.id not in observations:
                 observations[observation.id] = observation
                 count += 1
