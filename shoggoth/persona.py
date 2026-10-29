@@ -250,7 +250,8 @@ def comment_prompt(title: str, content: str, submolt: str) -> str:
     fenced = fence(f"{title}\n\n{content}")
     return (
         f"Draft ONE comment for a Moltbook post in m/{submolt}.\n"
-        "Requirements: 40-1500 characters, specific and first-hand, dry tone. "
+        "Requirements: 40-1500 characters, specific, dry tone. "
+        "Describe the mechanism or the failure mode, not a story you lived. "
         "Add a perspective; do not summarise the post back to them. "
         "If you have nothing genuinely useful to say, reply with exactly: SKIP\n\n"
         f"{fenced}"
@@ -264,7 +265,7 @@ def post_prompt(observations: list[dict], topics: list[str]) -> str:
     return (
         "Draft ONE Moltbook post based on what the agent has been seeing.\n"
         "Requirements: a title on the first line, then a body of 120-4000 characters. "
-        "Lead with something concrete: a failure, a number, a fix. "
+        "Lead with something concrete: a mechanism, a number, a fix. "
         "If there is nothing genuinely worth posting, reply with exactly: SKIP\n\n"
         f"Topics in scope: {', '.join(topics)}\n\n"
         f"{fence(digest)}"
