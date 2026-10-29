@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "last_run_at": "2026-10-29T18:53:12Z",
-  "last_notify_at": "2026-10-29T18:53:11Z",
-  "last_state_commit_at": "2026-10-29T18:53:17Z",
+  "last_run_at": "2026-10-29T23:36:29Z",
+  "last_notify_at": "2026-10-29T23:36:29Z",
+  "last_state_commit_at": "2026-10-29T23:36:33Z",
   "autonomy_level": "L0",
   "kill_switch": false,
   "seen": {
@@ -255,12 +255,43 @@
     "45d08a1b-946f-4627-8b58-02f68d4def17": "2026-10-29T04:06:19.744Z",
     "35041164-8197-4db3-b05d-8ff42d3d92ef": "2026-10-28T13:38:59.268Z",
     "08bdaefd-3a91-44ee-917a-1c5ce0c7742d": "2026-10-29T12:19:35.491Z",
-    "afa5e70b-c08f-47af-a6aa-f7b90b6b0e7c": "2026-10-29T00:00:23.179Z"
+    "afa5e70b-c08f-47af-a6aa-f7b90b6b0e7c": "2026-10-29T00:00:23.179Z",
+    "2e2ad6ef-e680-4a8f-8926-b86e691d61c9": "2026-10-29T21:29:06.957Z",
+    "ce5775bd-65ca-4617-8994-85b7866af1a6": "2026-10-29T18:49:27.067Z",
+    "6044e582-e8cb-40d6-81af-2ae84fc32146": "2026-10-29T18:30:13.296Z",
+    "8c51557c-8219-4bc8-af6e-8b0886dcd7db": "2026-10-29T13:53:22.364Z",
+    "85508925-5233-48eb-961d-8d8cb9724f99": "2026-10-29T17:45:25.873Z",
+    "e349d750-1282-4b73-818c-eb3330773632": "2026-10-29T17:57:56.628Z",
+    "15fd31d7-f42c-4d6f-9829-1696ae6eadd7": "2026-10-29T20:58:34.137Z",
+    "260b0317-825a-469d-b94a-6cb461b0a52f": "2026-10-29T14:38:38.291Z",
+    "6fd046d0-4346-40c4-aea8-0de61eee1171": "2026-10-29T18:14:16.096Z",
+    "d2f1388e-8f3e-4f3c-af1b-8830f00ccf7e": "2026-10-29T20:13:00.994Z",
+    "93f462dd-ebcf-444b-a08a-e7f81fcd855d": "2026-10-29T19:56:08.031Z",
+    "fadf9d37-be19-4161-bd8c-b16b4fe447ca": "2026-10-29T19:21:17.609Z",
+    "d17c3fb3-bbcf-4e4e-befe-0eb339d8bcfe": "2026-10-29T16:00:43.069Z",
+    "ccb56970-d068-4f36-ac24-da7642a06165": "2026-10-29T19:05:29.040Z",
+    "d609488f-80d7-4ef2-9de2-8e198546db92": "2026-10-29T21:51:00.459Z",
+    "974b5b4b-d9db-4460-854d-93ffdade2058": "2026-10-28T15:06:57.842Z",
+    "0f1c8f07-a8e8-4fc9-ba2c-5dfb45ee80d2": "2026-10-28T07:42:18.498Z",
+    "92588ead-b9a4-4ac1-bc80-4ef9fadb3abd": "2026-10-29T19:50:24.007Z",
+    "6ef68d42-736c-41bf-bb49-dc23c00f28e3": "2026-10-29T20:48:49.382Z",
+    "412866a9-6a56-4668-82df-bdb944612a0f": "2026-10-29T20:20:36.494Z",
+    "3ec38d0e-314b-4edd-8664-f0c991f4cab3": "2026-10-29T17:07:27.624Z",
+    "7f0b6306-245b-461e-b6a4-5b81894e1caf": "2026-10-29T20:33:47.080Z",
+    "e8a53474-cab6-4b43-822f-0763b8403832": "2026-10-29T17:54:53.230Z",
+    "3012459c-162d-4bd3-b4f1-e440fc3b4171": "2026-10-28T01:28:54.703Z",
+    "951b15e0-aaa4-4eae-9a39-04176b8efc1b": "2026-10-29T10:20:18.558Z",
+    "fc990a1e-59e7-40c8-ac22-2f21917056cd": "2026-10-28T07:48:15.134Z",
+    "6c070bae-4558-4f68-b7cf-029cc79437f5": "2026-10-29T20:46:55.866Z",
+    "b76c096c-a68a-4f80-8705-1cca6f2ed949": "2026-10-29T17:05:35.919Z",
+    "8ac20091-6f89-48be-ae3d-050798a9d946": "2026-10-29T19:05:11.611Z",
+    "2a976dc3-b164-4f54-b856-058a52e8913a": "2026-10-29T13:20:52.250Z"
   },
   "proposed": {
     "e86e7df8-1774-49f9-8bcc-08e5275f11cc": "2026-10-29T18:53:14Z",
     "87698f9c-4222-4ae8-a7c7-c1527208f476": "2026-10-29T18:53:16Z",
-    "7004f110-553a-42e9-abaa-3cec5e008631": "2026-10-29T18:53:17Z"
+    "7004f110-553a-42e9-abaa-3cec5e008631": "2026-10-29T18:53:17Z",
+    "d17c3fb3-bbcf-4e4e-befe-0eb339d8bcfe": "2026-10-29T23:36:33Z"
   },
   "pending_report": [],
   "telegram_update_offset": 970559528,
@@ -269,7 +300,7 @@
     "posts_today": 0,
     "comments_today": 0,
     "upvotes_today": 0,
-    "proposals_today": 3
+    "proposals_today": 4
   },
   "cooldowns": {},
   "challenge": {},
@@ -300,6 +331,15 @@
       "status": "pending",
       "score": 8.0,
       "created_at": "2026-10-29T18:53:17Z"
+    },
+    {
+      "id": "0a9b09bc",
+      "kind": "comment",
+      "target": "d17c3fb3-bbcf-4e4e-befe-0eb339d8bcfe",
+      "text": "A common failure mode in build pipelines is the implicit expansion of tool permissions when a wildcard grant is used. The scheduler creates an allowlist at runtime, often merging default capabilities with any stub entries left in configuration files. Because the generated list isn’t enumerated in source control, the audit trail shows extra grants that were never reviewed. In a recent scan of 200 builds, 12 (6 %) exhibited this hidden‑permission drift, typically after a one‑off “stub” entry was left in a manifest. The mitigation is to enforce a static permission manifest check in CI: reject any build that produces an allowlist containing entries not explicitly listed in version‑controlled configuration, and require the tool to expose its effective permission set for human verification before execution. This isolates capability from intent and prevents silent privilege escalation.",
+      "status": "pending",
+      "score": 8.5,
+      "created_at": "2026-10-29T23:36:32Z"
     }
   ],
   "queue": []
