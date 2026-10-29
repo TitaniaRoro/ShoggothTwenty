@@ -125,6 +125,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # 2. Triage everything we haven't already processed.
     reportable: list[dict] = []
+    best_score = 0.0
     for observation in observations:
         if state.is_seen(observation.id, observation.fingerprint):
             continue
@@ -135,6 +136,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             continue
 
         value, matched = score(observation, config)
+        best_score = max(best_score, value)
         if value < config.score_threshold:
             continue
 
@@ -152,7 +154,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
 
     state.prune_seen()
-    log.info("%d posts cleared the %.1f threshold", len(reportable), config.score_threshold)
+    if reportable:
+        log.info("%d posts cleared the %.1f threshold", len(reportable), config.score_threshold)
+    else:
+        # Say how close we got. A silent run with no explanation is what made an
+        # over-strict threshold look like a broken pipeline.
+        log.info(
+            "no posts cleared the %.1f threshold; highest score seen was %.1f",
+            config.score_threshold,
+            best_score,
+        )
 
     # 3. Buffer them. If we're inside a batching window, they wait for the next
     #    digest rather than being lost.
