@@ -24,7 +24,9 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: moltbook-agent   # branch-restricted environment holding the secrets
+    # Optional hardening: move the secrets into an environment restricted to the
+    # default branch, then uncomment the next line. See README setup step 4.
+    # environment: moltbook-agent
     steps:
       # Pinned to commit SHAs: this repo is public and holds secrets, so a
       # mutable tag on a third-party action is an unnecessary risk.

@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from shoggoth.audit import AuditLog
 from shoggoth.config import ConfigError, Settings, utc_now_iso
 from shoggoth.digest import render_alert, render_digest
 from shoggoth.moltbook import MoltbookClient
@@ -91,6 +92,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     telegram = Telegram(
         settings.telegram_bot_token, settings.telegram_chat_id, dry_run=settings.dry_run
     )
+    audit = AuditLog()
 
     # 1. Observe. A heartbeat that can't read the feed is a broken heartbeat and
     #    must not be reported as "nothing new".
@@ -100,9 +102,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         # The message contains an error string from the API, so it gets escaped
         # like any other third-party text.
         log.error("%s", exc)
+        audit.record("run_failed", error=str(exc))
         telegram.send(render_alert("ShoggothTwenty heartbeat failed", str(exc)))
         return EXIT_FATAL
 
+    audit.record("run_start", posts_seen=len(observations), submolts=len(config.submolts))
     log.info("collected %d posts across %d submolts", len(observations), len(config.submolts))
 
     # 2. Triage everything we haven't already processed.
@@ -148,6 +152,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     send_now, reason = _should_notify(state, config, has_priority)
     log.info("notify decision: %s (%s)", "send" if send_now else "hold", reason)
+    audit.record(
+        "notify_decision",
+        send=send_now,
+        reason=reason,
+        buffered=len(state.pending_report),
+        priority=has_priority,
+    )
 
     if send_now:
         buffered = sorted(

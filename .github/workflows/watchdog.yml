@@ -16,7 +16,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: moltbook-agent
+    # Optional hardening: see README setup step 4.
+    # environment: moltbook-agent
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

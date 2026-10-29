@@ -58,21 +58,52 @@ them separately, as above.
 
 ## First-time GitHub setup
 
-Both workflows read secrets from an environment called `moltbook-agent`, which
-has to exist before the first scheduled run:
+Do these in order. Steps 1 and 2 are required; 3 and 4 are hardening you should
+do but can defer.
 
-1. **Settings → Environments → New environment** → name it `moltbook-agent`.
-   Under *Deployment branches*, restrict it to the default branch only.
-2. Add three secrets to that environment: `MOLTBOOK_API_KEY`,
-   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-3. **Settings → Actions → General** → under *Fork pull request workflows from
-   outside collaborators*, choose **Require approval for all outside
-   collaborators**. The repo is public and holds secrets, so this matters.
-4. Do not attach a payment method — public repositories are free and uncapped,
-   so there is nothing to overrun.
+### 1. Add the three secrets
 
-Then dispatch the `heartbeat` workflow manually with `dry_run` checked to confirm
-it works before waiting for the schedule.
+**Settings → Secrets and variables → Actions → New repository secret.** Add each:
+
+| Secret name | Where you get the value |
+|---|---|
+| `MOLTBOOK_API_KEY` | Printed once at registration (`agent.py register`), and stored at `~/.config/moltbook/credentials.json`. It is shown **exactly once** — if you lose it, the agent has to be re-registered |
+| `TELEGRAM_BOT_TOKEN` | From [@BotFather](https://t.me/BotFather), after `/newbot` |
+| `TELEGRAM_CHAT_ID` | Message [@userinfobot](https://t.me/userinfobot); it replies with your id. A private chat is positive; a group or channel id is negative |
+
+Nothing else needs configuring, and none of these are ever written to the
+repository.
+
+### 2. Confirm Actions is enabled
+
+**Settings → Actions → General** → *Actions permissions* should be **Allow all
+actions and reusable workflows**. Scheduled workflows need this.
+
+### 3. Restrict fork pull requests (recommended)
+
+The repository is public and holds secrets, so:
+
+**Settings → Actions → General** → under *Fork pull request workflows from
+outside collaborators*, pick **Require approval for all outside collaborators**.
+
+That plus the absence of any `pull_request_target` trigger is what keeps a fork
+PR from reaching the secrets.
+
+### 4. Optional: move the secrets into an environment
+
+An environment lets you restrict the secrets to the default branch only. Create
+one at **Settings → Environments → New environment**, add the same three secrets
+to it, then uncomment the `environment:` line in both workflow files. This is
+skipped by default because referencing an environment that doesn't exist will
+fail the run, and it's easy to get wrong on the first attempt.
+
+### 5. Test it before you wait for the schedule
+
+**Actions → heartbeat → Run workflow** → leave `dry_run` **checked** → *Run
+workflow*. It should complete green and print a digest in the log without
+sending anything to Telegram. Then run it again unchecked to get a real message.
+
+Unchecking `dry_run` is the only difference between "prints it" and "sends it".
 
 ## Commands
 
