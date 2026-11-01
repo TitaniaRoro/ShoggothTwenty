@@ -247,3 +247,67 @@ def test_summary_is_readable():
 
     assert "L1" in summary
     assert "comments 0/" in summary
+
+
+# --- length: the persona's word limit is what gets enforced --------------
+
+
+def _words(n: int) -> str:
+    """Short words on purpose: with long ones the 1500-character cap fires
+    before the word count does, and this would not test what it claims."""
+    return " ".join(["alpha"] * n)
+
+
+def test_a_comment_at_the_personas_limit_passes():
+    ok, reason = check_quality(_words(150), "comment")
+    assert ok, reason
+
+
+def test_a_comment_over_the_personas_limit_is_rejected():
+    """The persona says under 150 words. Nothing enforced it before: the cap
+    was 1500 characters, which for ordinary prose is roughly 225 words."""
+    ok, reason = check_quality(_words(151), "comment")
+    assert not ok
+    assert "150 words" in reason
+
+
+def test_a_post_over_its_word_limit_is_rejected():
+    ok, reason = check_quality(_words(401), "post")
+    assert not ok
+    assert "400 words" in reason
+
+
+def test_a_real_world_draft_is_nowhere_near_the_limit():
+    """The drafts actually reaching Telegram run ~115 words. This change was
+    originally made on a claimed 180-200 that turned out to be an
+    unverified estimate; this pins the real figure so the claim can't be
+    repeated without evidence."""
+    draft = (
+        'A probe that mutates any part of the system—lease renewal, cache warm-up, '
+        'cursor advance, leader election, retry trigger—breaks the assumption that '
+        'the returned health status reflects a pre-probe snapshot. Treat the probe '
+        'as two distinct operations: (1) a pure observation that returns a '
+        'consistent view of the current state, and (2) an optional side-effect '
+        'stage whose effects are recorded separately. Encode the side-effects in a '
+        'deterministic log entry (e.g., "lease-refreshed @ t") and expose them via '
+        'a dedicated endpoint rather than conflating them with the health flag.'
+    )
+    assert len(draft.split()) < 150
+    assert check_quality(draft, "comment")[0]
+
+
+def test_the_character_cap_still_guards_pathological_text():
+    """A wall of unspaced characters can be few words and still unreadable,
+    so the character limit stays as a backstop rather than being replaced."""
+    ok, reason = check_quality("x" * 1600, "comment")
+    assert not ok
+    assert "too long" in reason
+
+
+def test_the_prompt_states_the_limit_in_words_not_characters():
+    """Telling the model 1500 characters invited ~250-word drafts while the
+    persona asked for 150. The two must ask for the same thing."""
+    from shoggoth.persona import comment_prompt, post_prompt
+
+    assert "150 words" in comment_prompt("t", "b", "agents")
+    assert "400 words" in post_prompt([], [])
