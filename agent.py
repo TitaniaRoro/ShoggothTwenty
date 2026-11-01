@@ -65,6 +65,12 @@ POLL_FAILURE_ALERT_AFTER = 3
 # a cadence that reads as a considered participant rather than a feed.
 MAX_POST_DRAFTS_PER_DAY = 1
 
+# A draft older than this is not resurfaced without --all. Telegram only
+# holds a button press for 24 hours, so beyond this the original card is
+# dead and the draft is stale. It also happens to quarantine drafts made
+# under a persona that has since been fixed — see cmd_pending.
+PENDING_MAX_AGE_HOURS = 24
+
 
 def _configure_logging(verbose: bool) -> None:
     logging.basicConfig(
@@ -308,6 +314,101 @@ def cmd_commit_state(args: argparse.Namespace) -> int:
     state.save(settings.state_path)
     log.info("state commit armed")
     return EXIT_OK
+
+
+def cmd_pending(args: argparse.Namespace) -> int:
+    """Re-send everything still awaiting a decision, as batch cards.
+
+    Drafts accumulate. Telegram only holds a button press for 24 hours, cards
+    scroll out of view, and a run that drafted four things leaves four
+    separate decisions buried in chat history. The backlog then sits there
+    while the agent publishes nothing — which is what a working pipeline with
+    nine drafts and zero approvals looks like from the outside.
+
+    Re-sending is safe: a proposal is matched by id, so a second press on a
+    re-sent card resolves the same proposal, and one that is already decided
+    is simply skipped.
+    """
+    settings = Settings.from_env(require_moltbook=False, require_telegram=True)
+    state = State.load(settings.state_path)
+
+    pending = [p for p in state.pending_approvals if p.get("status") == "pending"]
+    if not pending:
+        log.info("nothing awaiting a decision")
+        return EXIT_OK
+
+    # Age-gate, because a re-sent card looks exactly like a fresh one. Drafts
+    # made under an earlier, defective persona are still sitting in state, and
+    # without this they would be offered for approval as if nothing had
+    # changed. Overriding is possible but has to be asked for.
+    fresh, stale = [], []
+    for proposal in pending:
+        age = _age_hours(proposal.get("created_at"))
+        if age is None or args.all or age <= PENDING_MAX_AGE_HOURS:
+            fresh.append(proposal)
+        else:
+            stale.append(proposal)
+
+    if stale:
+        log.warning(
+            "%d draft(s) older than %dh withheld — they were drafted under an "
+            "earlier persona. Re-send with --all only after reading them; "
+            "discard with: python agent.py control --clear-pending",
+            len(stale),
+            PENDING_MAX_AGE_HOURS,
+        )
+    if not fresh:
+        log.info("nothing fresh to re-send")
+        return EXIT_OK
+    pending = fresh
+
+    telegram = Telegram(
+        settings.telegram_bot_token, settings.telegram_chat_id, dry_run=settings.dry_run
+    )
+
+    items = []
+    for proposal in pending:
+        item = {
+            "id": proposal["id"],
+            "kind": proposal.get("kind", "comment"),
+            "header": proposal.get("target", "(unknown)"),
+            "text": proposal.get("text", ""),
+        }
+        if proposal.get("kind") == "post":
+            item["header"] = f"to m/{proposal.get('target', '?')}"
+            item["title"] = proposal.get("title")
+        else:
+            item["header"] = f"m/? — {proposal.get('target', '')}"
+            item["meta"] = f"score {proposal.get('score', 0):.1f}"
+            item["url"] = f"https://www.moltbook.com/posts/{proposal.get('target', '')}"
+        age = _age_hours(proposal.get("created_at"))
+        if age is not None:
+            item["meta"] = f"{item.get('meta', '')}, drafted {age:.0f}h ago".lstrip(", ")
+        items.append(item)
+
+    groups = chunk_items(items)
+    number = 1
+    for group in groups:
+        telegram.send_approval(
+            render_batch(group, start=number), [item["id"] for item in group]
+        )
+        number += len(group)
+
+    log.info("re-sent %d pending draft(s) in %d card(s)", len(pending), len(groups))
+    return EXIT_OK
+
+
+def _age_hours(created_at: str | None) -> float | None:
+    """Hours since a proposal was drafted, so a stale card says so."""
+    if not created_at:
+        return None
+    try:
+        created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - created).total_seconds() / 3600.0
 
 
 def _resolve_approvals(telegram: Telegram, state: State) -> list[dict]:
@@ -670,6 +771,18 @@ def cmd_control(args: argparse.Namespace) -> int:
         state.challenge = {}
         log.info("challenge failure streak cleared")
 
+    if getattr(args, "clear_pending", False):
+        # Drafts outlive the persona that wrote them. When the persona changes,
+        # everything still queued was written under the old one and must not be
+        # publishable — otherwise a fix lands and the stale output ships anyway.
+        dropped = [p for p in state.pending_approvals if p.get("status") == "pending"]
+        for proposal in dropped:
+            proposal["status"] = "discarded"
+        log.warning(
+            "discarded %d draft(s) awaiting a decision; they will not be published",
+            len(dropped),
+        )
+
     state.save(settings.state_path)
     return EXIT_OK
 
@@ -830,6 +943,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="apply the harsher first-24h limits (1 post / 2h, 20 comments / day)",
     )
     propose.set_defaults(func=cmd_propose)
+
+    pending_cmd = sub.add_parser(
+        "pending",
+        help="re-send drafts still awaiting a decision as batch cards",
+    )
+    pending_cmd.add_argument(
+        "--all",
+        action="store_true",
+        help="include drafts older than %dh (they may predate a persona fix)" % PENDING_MAX_AGE_HOURS,
+    )
+    pending_cmd.set_defaults(func=cmd_pending)
 
     control = sub.add_parser("control", help="set autonomy level or flip the kill switch")
     control.add_argument("--level", choices=sorted(AUTO_ACTIONS), help="L0 shadow … L3 autonomous")
