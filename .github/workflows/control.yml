@@ -1,0 +1,148 @@
+name: control
+
+# The autonomy level lives in state/state.json, which only exists on the
+# runner for the length of a job. Changing it therefore means running
+# `agent.py control` AND committing the result back — two steps that no
+# workflow exposed, so the level could not be changed from the GitHub UI at
+# all. It could only be changed from a terminal with the repo checked out.
+#
+# That mattered more than it sounds: at L0 every action needs a human tap,
+# so the level is the one setting that decides whether this agent does
+# anything or merely watches. It should not require a terminal to move.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        default: status
+        options:
+          - status
+          - set-level
+          - pending
+          - clear-pending
+          - kill
+          - unkill
+      level:
+        description: 'Autonomy level — only used by set-level'
+        type: choice
+        default: L0
+        options:
+          - L0
+          - L1
+          - L2
+          - L3
+      include_stale:
+        description: 'pending — also show drafts older than 24h'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # the level change is committed back, or it is lost
+
+concurrency:
+  group: control
+  cancel-in-progress: false   # never interrupt a state write
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install --require-hashes -r requirements.txt
+
+      # Read the level straight out of state before and after. A green run
+      # proves nothing — the same lesson as claim status, which is reported
+      # as a log line rather than an exit code for exactly this reason.
+      - name: Before
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          s = json.loads(pathlib.Path("state/state.json").read_text())
+          print(f"autonomy_level = {s.get('autonomy_level')}")
+          print(f"kill_switch    = {s.get('kill_switch')}")
+          print(f"pending        = {len([p for p in s.get('pending_approvals', []) if p.get('status') == 'pending'])}")
+          PY
+
+      - name: status
+        if: inputs.action == 'status'
+        run: python agent.py self-check --moltbook-only || true
+
+      - name: set-level
+        if: inputs.action == 'set-level'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python agent.py control --level ${{ inputs.level }}
+
+      - name: pending
+        if: inputs.action == 'pending'
+        env:
+          MOLTBOOK_API_KEY: ${{ secrets.MOLTBOOK_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+        run: |
+          if [ "${{ inputs.include_stale }}" = "true" ]; then
+            python agent.py pending --all
+          else
+            python agent.py pending
+          fi
+
+      - name: clear-pending
+        if: inputs.action == 'clear-pending'
+        run: python agent.py control --clear-pending
+
+      - name: kill
+        if: inputs.action == 'kill'
+        run: python agent.py control --kill
+
+      - name: unkill
+        if: inputs.action == 'unkill'
+        run: python agent.py control --unkill
+
+      # The write is worthless until it is committed: the runner is ephemeral
+      # and this state file is the only copy.
+      - name: Commit the change
+        run: |
+          git config user.name "shoggoth-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "::notice::no state change to commit (read-only action, or already set)"
+            exit 0
+          fi
+          git commit -m "state: control ${{ inputs.action }} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for attempt in 1 2 3; do
+            if git pull --rebase --autostash && git push; then
+              echo "committed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::state commit failed after 3 attempts — the change did NOT persist"
+          exit 1
+
+      - name: After
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          s = json.loads(pathlib.Path("state/state.json").read_text())
+          print("--- resulting state ---")
+          print(f"autonomy_level = {s.get('autonomy_level')}")
+          print(f"kill_switch    = {s.get('kill_switch')}")
+          print(f"pending        = {len([p for p in s.get('pending_approvals', []) if p.get('status') == 'pending'])}")
+          PY
