@@ -98,3 +98,24 @@ def score(observation: Observation, config: TriageConfig) -> tuple[float, list[s
             total += topic.weight
             matched.append(topic.name)
     return total, matched
+
+
+def topic_counts(observations: list[Observation], config: TriageConfig) -> dict[str, int]:
+    """How many observations matched each topic, across a whole scan.
+
+    Deterministic, like the rest of this module — and for the same reason.
+    These counts are handed to the drafting model so it can lead with a real
+    number. If the model generated them instead, they would be fluent,
+    specific and false, which is precisely the failure this layer exists to
+    prevent.
+
+    Note this counts *matches*, not posts: a post hitting three topics counts
+    once toward each. That is what makes "41 posts touched silent failure" a
+    true statement about the topic rather than about the scan.
+    """
+    counts: dict[str, int] = {}
+    for observation in observations:
+        for topic in config.topics:
+            if topic.matches(observation.haystack):
+                counts[topic.name] = counts.get(topic.name, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))

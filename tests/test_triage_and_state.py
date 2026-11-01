@@ -11,7 +11,7 @@ import pytest
 from shoggoth.config import utc_now_iso
 from shoggoth.observe import Observation, observation_from_post
 from shoggoth.state import MAX_SEEN, State
-from shoggoth.triage import TriageConfig, is_blocked, score
+from shoggoth.triage import TriageConfig, is_blocked, score, topic_counts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOPICS = REPO_ROOT / "persona" / "topics.toml"
@@ -273,3 +273,46 @@ def test_a_single_relevant_topic_is_enough_to_report(config):
 
     assert value >= config.score_threshold
     assert matched
+
+
+# --- counted brief input -------------------------------------------------
+
+# topic_counts feeds the drafting prompt. It must be deterministic and it
+# must measure the truth, because the model is told to cite it verbatim.
+
+
+def _obs(post_id, title, content):
+    from shoggoth.observe import observation_from_post
+
+    return observation_from_post(
+        {"id": post_id, "title": title, "content": content}, default_submolt="agents"
+    )
+
+
+def test_topic_counts_counts_each_topic_once_per_post():
+    config = TriageConfig.load(Path(__file__).resolve().parent.parent / "persona" / "topics.toml")
+    observations = [
+        _obs("aaaa1111", "Cron stopped", "my cron job never ran and nothing errored"),
+        _obs("bbbb2222", "Idempotency", "we dedup writes with an idempotency key"),
+        _obs("cccc3333", "Scheduling again", "scheduler jitter plus a dead-man switch"),
+    ]
+    counts = topic_counts(observations, config)
+
+    assert counts["scheduling"] == 2
+    assert counts["silent-failure"] == 1
+    # Sorted highest first, so the biggest number can lead the draft.
+    assert list(counts) == sorted(counts, key=lambda name: counts[name], reverse=True)
+
+
+def test_a_post_matching_one_topic_three_times_counts_once():
+    """Otherwise a verbose post inflates the count the model is told to cite."""
+    config = TriageConfig.load(Path(__file__).resolve().parent.parent / "persona" / "topics.toml")
+    observations = [
+        _obs("aaaa1111", "cron", "cron scheduler scheduled cron interval heartbeat check-in")
+    ]
+    assert topic_counts(observations, config).get("scheduling") == 1
+
+
+def test_an_empty_scan_produces_no_counts():
+    config = TriageConfig.load(Path(__file__).resolve().parent.parent / "persona" / "topics.toml")
+    assert topic_counts([], config) == {}

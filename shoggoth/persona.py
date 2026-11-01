@@ -244,32 +244,78 @@ def fence(text: str) -> str:
     return f"{DELIM_OPEN}\n{text[:6000]}\n{DELIM_CLOSE}"
 
 
-def comment_prompt(title: str, content: str, submolt: str) -> str:
+def comment_prompt(title: str, content: str, submolt: str, counts: str = "") -> str:
     # Built outside the f-string: Python 3.11 rejects backslashes inside an
     # f-string expression, and this must run on 3.11 as well as 3.12.
     fenced = fence(f"{title}\n\n{content}")
+    brief = f"{counts}\n\n" if counts else ""
     return (
         f"Draft ONE comment for a Moltbook post in m/{submolt}.\n"
         "Requirements: 40-1500 characters, specific, dry tone. "
         "Describe the mechanism or the failure mode, not a story you lived. "
         "Add a perspective; do not summarise the post back to them. "
         "If you have nothing genuinely useful to say, reply with exactly: SKIP\n\n"
-        f"{fenced}"
+        f"{brief}{fenced}"
     )
 
 
-def post_prompt(observations: list[dict], topics: list[str]) -> str:
+def post_prompt(observations: list[dict], topics: list[str], counts: str = "") -> str:
     digest = "\n\n".join(
         f"- m/{item.get('submolt', 'unknown')}: {item.get('title', '')}" for item in observations[:8]
     )
+    brief = f"{counts}\n\n" if counts else ""
     return (
         "Draft ONE Moltbook post based on what the agent has been seeing.\n"
         "Requirements: a title on the first line, then a body of 120-4000 characters. "
         "Lead with something concrete: a mechanism, a number, a fix. "
         "If there is nothing genuinely worth posting, reply with exactly: SKIP\n\n"
         f"Topics in scope: {', '.join(topics)}\n\n"
-        f"{fence(digest)}"
+        f"{brief}{fence(digest)}"
     )
+
+
+def render_counts(
+    topic_counts: dict[str, int],
+    *,
+    scanned: int,
+    submolts: int,
+    top: int = 5,
+    watch_counts: dict[str, int] | None = None,
+) -> str:
+    """The numbers the agent actually measured, for the drafter to lead with.
+
+    This exists because the persona says "lead with a number" while the prompt
+    previously supplied none. A model told to be concrete and given nothing
+    concrete produces concrete-sounding invention — which is how the fabricated
+    drafts happened.
+
+    Everything here is counted by code, so a model citing it is telling the
+    truth whether or not it meant to. That is the point: it makes the agent's
+    most valuable claim — "I read all of it and here is the shape" — safe to
+    make at volume.
+    """
+    if not topic_counts and not watch_counts:
+        return ""
+
+    lines = [f"WHAT YOU MEASURED ({scanned} posts across {submolts} submolts):"]
+
+    for name, count in list(topic_counts.items())[:top]:
+        # Kept inside the f-string build: Python 3.11 rejects backslashes in
+        # f-string expressions, and this runs on 3.11 as well as 3.12.
+        topic_name = name.replace("-", " ")
+        lines.append(f"- {topic_name}: {count}")
+
+    if watch_counts:
+        summary = ", ".join(
+            f"{name} {count}" for name, count in sorted(watch_counts.items())
+        )
+        lines.append(f"Watch lane: {summary}.")
+
+    lines.append(
+        "These were counted, not estimated. Cite them freely and exactly. "
+        "Never state a number that is not listed here."
+    )
+    return "\n".join(lines)
 
 
 @dataclass
