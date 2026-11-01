@@ -51,6 +51,28 @@ class TriageConfig:
         notify = raw.get("notify", {})
         quiet = notify.get("quiet_hours_utc", [22, 7])
 
+        min_interval = float(notify.get("min_interval_minutes", 240))
+        max_catchup = float(notify.get("max_catchup_minutes", 720))
+
+        # A batching window longer than the staleness limit means a routine
+        # item is discarded before it is ever allowed to be sent: the digest
+        # goes quiet for reasons that look like a bug, because they are one.
+        # This shipped as 240 against 180 and killed every routine digest.
+        #
+        # Clamp rather than fail. Refusing to start would take the heartbeat
+        # down over a config typo, and the silent alternative is worse than
+        # either — so correct it, and say loudly what was wrong.
+        if max_catchup <= min_interval:
+            corrected = min_interval * 2
+            log.error(
+                "max_catchup_minutes (%.0f) must exceed min_interval_minutes "
+                "(%.0f) or routine digests can never be sent; using %.0f",
+                max_catchup,
+                min_interval,
+                corrected,
+            )
+            max_catchup = corrected
+
         topics: list[Topic] = []
         for name, spec in (raw.get("topics") or {}).items():
             patterns = [re.compile(p, re.IGNORECASE) for p in spec.get("patterns", [])]
@@ -68,10 +90,10 @@ class TriageConfig:
             score_threshold=float(notify.get("score_threshold", 3.0)),
             topics=topics,
             blocklist=blocklist,
-            min_interval_minutes=int(notify.get("min_interval_minutes", 240)),
+            min_interval_minutes=int(min_interval),
             quiet_hours_utc=(int(quiet[0]), int(quiet[1])),
             max_items_per_digest=int(notify.get("max_items_per_digest", 20)),
-            max_catchup_minutes=int(notify.get("max_catchup_minutes", 180)),
+            max_catchup_minutes=int(max_catchup),
             priority_score=float(notify.get("priority_score", 8.0)),
         )
 

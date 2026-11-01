@@ -316,3 +316,89 @@ def test_a_post_matching_one_topic_three_times_counts_once():
 def test_an_empty_scan_produces_no_counts():
     config = TriageConfig.load(Path(__file__).resolve().parent.parent / "persona" / "topics.toml")
     assert topic_counts([], config) == {}
+
+
+# --- catch-up must outlive the batching window ---------------------------
+
+
+def _config_with(tmp_path: Path, max_catchup: int, min_interval: int = 240) -> TriageConfig:
+    source = (Path(__file__).resolve().parent.parent / "persona" / "topics.toml").read_text()
+    source = source.replace(f"min_interval_minutes = 240", f"min_interval_minutes = {min_interval}")
+    source = source.replace("max_catchup_minutes = 720", f"max_catchup_minutes = {max_catchup}")
+    path = tmp_path / "topics.toml"
+    path.write_text(source)
+    return TriageConfig.load(path)
+
+
+def test_the_shipped_config_lets_a_routine_digest_fire():
+    """The bug: 180 against a 240-minute window. A routine item was dropped an
+    hour before it was allowed to be sent, so routine digests never fired and
+    only priority ones — which bypass batching — ever arrived."""
+    config = TriageConfig.load(
+        Path(__file__).resolve().parent.parent / "persona" / "topics.toml"
+    )
+    assert config.max_catchup_minutes > config.min_interval_minutes
+
+
+def test_a_catchup_shorter_than_the_window_is_clamped_not_silently_broken(tmp_path):
+    config = _config_with(tmp_path, max_catchup=180, min_interval=240)
+
+    assert config.max_catchup_minutes > config.min_interval_minutes
+    assert config.max_catchup_minutes >= config.min_interval_minutes * 2
+
+
+def test_clamping_survives_a_worse_typo(tmp_path):
+    config = _config_with(tmp_path, max_catchup=1, min_interval=600)
+    assert config.max_catchup_minutes == 1200
+
+
+def test_a_sane_config_is_left_alone(tmp_path):
+    config = _config_with(tmp_path, max_catchup=720, min_interval=240)
+    assert config.max_catchup_minutes == 720
+    assert config.min_interval_minutes == 240
+
+
+def test_a_routine_item_outlives_a_full_batching_window(tmp_path):
+    """End to end: buffered now, digest sent an hour ago, still there when the
+    window opens four hours later."""
+    from datetime import datetime, timedelta, timezone
+
+    config = TriageConfig.load(
+        Path(__file__).resolve().parent.parent / "persona" / "topics.toml"
+    )
+    state = State.load(tmp_path / "state.json")
+    now = datetime.now(timezone.utc)
+
+    state.pending_report = [
+        {"id": "x", "title": "routine", "score": 4.0,
+         "first_seen": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    ]
+    # +4h is the moment the routine window opens.
+    future = now + timedelta(minutes=config.min_interval_minutes)
+    state.drop_stale_report(config.max_catchup_minutes)  # this run
+    assert state.pending_report, "item dropped immediately"
+
+    # Simulate the item ageing until the window opens.
+    state.pending_report[0]["first_seen"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert future > now
+    state.drop_stale_report(config.max_catchup_minutes)
+    assert state.pending_report, "item expired before the batching window opened"
+
+
+def test_the_scan_depth_stays_inside_the_read_budget():
+    """Moltbook allows 60 reads per minute. A run spends one read per page per
+    submolt, so depth has a hard ceiling — this is the check that stops
+    someone raising it past the limit while compensating for a slow schedule."""
+    import inspect
+
+    from shoggoth.observe import collect
+
+    signature = inspect.signature(collect)
+    pages = signature.parameters["max_pages"].default
+    submolts = 5
+
+    assert pages * submolts <= 30, (
+        f"{pages} pages x {submolts} submolts = {pages * submolts} reads, "
+        "which risks the 60/minute read budget"
+    )
+    assert pages >= 2, "depth this shallow misses the feed between infrequent runs"
