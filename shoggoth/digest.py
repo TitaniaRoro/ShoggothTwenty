@@ -50,6 +50,37 @@ def render_digest(items: list[dict[str, Any]], *, suppressed: int = 0) -> str:
     return "\n".join(lines).rstrip()
 
 
+def render_published(items: list[dict], level: str) -> str:
+    """Report what the agent published without asking anyone first.
+
+    An unattended publish has no approval card to point back at, so without
+    this the only record is a line in a workflow log nobody reads. The owner
+    is responsible for everything the agent posts, and cannot review what
+    they are never shown.
+    """
+    lines = [
+        f"\U0001f916 <b>ShoggothTwenty — published unattended (level {escape_html(level)})</b>",
+        "",
+    ]
+    for number, item in enumerate(items, start=1):
+        url = item.get("url")
+        heading = f"{number}. <b>{escape_html(item.get('header', '(unknown)'))}</b>"
+        if url:
+            heading = f'{number}. <b><a href="{escape_html(url)}">{escape_html(item.get("header", "(unknown)"))}</a></b>'
+        lines.append(heading)
+        if item.get("title"):
+            lines.append(f"   <i>{escape_html(item['title'])}</i>")
+        lines.append(f"   {escape_html(item.get('kind', 'comment'))} — {escape_html(item.get('meta', ''))}".rstrip(" — "))
+        lines.append("")
+        body = escape_html(item.get("text", ""))
+        lines.append(body[:700] + ("…" if len(body) > 700 else ""))
+        lines.append("")
+    lines.append(
+        "<i>Drop to L0 in Settings-level control if you would rather approve these first.</i>"
+    )
+    return "\n".join(lines).rstrip()
+
+
 def render_alert(title: str, detail: str) -> str:
     """Render an operational alert: failures, suspension risk, escalation."""
     return f"⚠️ <b>{escape_html(title)}</b>\n\n{escape_html(detail)}"

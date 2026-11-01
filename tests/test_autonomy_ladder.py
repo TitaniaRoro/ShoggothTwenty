@@ -196,3 +196,134 @@ def test_a_successful_publish_is_audited_as_unattended():
 def test_a_queued_draft_is_audited_as_a_draft():
     _state, _, _, _, audit, _ = _run("L0", "comment")
     assert any(kind == "draft" for kind, _ in audit.events)
+
+
+# --- an unattended publish must be visible -------------------------------
+#
+# At L1 the agent writes to a public platform with nobody reading it first.
+# The only record was a log line in a workflow. The owner is responsible for
+# everything the agent posts, and cannot review what they are never shown.
+
+
+def test_render_published_is_imported_where_it_is_used():
+    """A missing import is a NameError only at the moment it first fires —
+    i.e. the first time the agent publishes unattended, in production."""
+    import agent
+
+    assert callable(agent.render_published)
+
+
+def test_a_publish_is_reported_with_its_text_and_a_link():
+    from shoggoth.digest import render_published
+
+    out = render_published(
+        [
+            {
+                "kind": "comment",
+                "header": "m/agents — Retry storms",
+                "text": "A guard that never fires creates a stability column.",
+                "meta": "score 7.5",
+                "url": "https://www.moltbook.com/posts/abc123",
+            }
+        ],
+        "L1",
+    )
+    assert "Retry storms" in out
+    assert "stability column" in out, "the text has to be shown, not just the title"
+    assert "moltbook.com/posts/abc123" in out, "needs a link to go and check it"
+    assert "L1" in out, "must say which level published it"
+
+
+def test_the_report_escapes_untrusted_text():
+    """Post titles and bodies come off Moltbook. They must not be able to
+    inject markup into a Telegram message."""
+    from shoggoth.digest import render_published
+
+    out = render_published(
+        [
+            {
+                "kind": "comment",
+                "header": "<script>alert(1)</script>",
+                "text": "<b>not bold</b> & <i>x</i>",
+                "meta": "",
+                "url": None,
+            }
+        ],
+        "L1",
+    )
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_nothing_is_reported_when_nothing_was_published():
+    """The message must not fire on a run that only queued drafts."""
+    from shoggoth.digest import render_published
+
+    # The guard lives in the caller; this pins the renderer's empty behaviour
+    # so a future refactor cannot turn it into a blank message.
+    out = render_published([], "L1")
+    assert "ShoggothTwenty" in out  # heading still renders
+    assert "level L1" in out
+
+
+def test_an_unattended_publish_records_itself_for_reporting():
+    """_publish_or_queue has to hand the text back, or there is nothing to
+    report."""
+    state = State()
+    state.autonomy_level = "L2"
+    published: list[dict] = []
+    batch: list[dict] = []
+
+    agent._publish_or_queue(
+        state=state,
+        policy=Policy.for_state(state),
+        actor=FakeActor(),
+        telegram=FakeTelegram(),
+        audit=FakeAudit(),
+        kind="comment",
+        target="post-1",
+        text="the body that was published",
+        title=None,
+        score=7.5,
+        observation_id="post-1",
+        header="m/agents — Something",
+        meta="score 7.5",
+        url="https://www.moltbook.com/posts/post-1",
+        batch=batch,
+        published=published,
+    )
+
+    assert len(published) == 1
+    assert published[0]["text"] == "the body that was published"
+    assert published[0]["header"] == "m/agents — Something"
+    assert published[0]["url"] == "https://www.moltbook.com/posts/post-1"
+    assert batch == [], "a published draft has nothing left to approve"
+
+
+def test_a_queued_draft_is_not_reported_as_published():
+    state = State()
+    state.autonomy_level = "L0"
+    published: list[dict] = []
+    batch: list[dict] = []
+
+    agent._publish_or_queue(
+        state=state,
+        policy=Policy.for_state(state),
+        actor=FakeActor(),
+        telegram=FakeTelegram(),
+        audit=FakeAudit(),
+        kind="comment",
+        target="post-1",
+        text="queued body",
+        title=None,
+        score=7.5,
+        observation_id="post-1",
+        header="m/agents — Something",
+        meta="score 7.5",
+        url=None,
+        batch=batch,
+        published=published,
+    )
+
+    assert published == [], "L0 queues; reporting it as published would be a lie"
+    assert len(batch) == 1
