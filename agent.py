@@ -28,6 +28,7 @@ from shoggoth.observe import Observation, collect
 from shoggoth.persona import (
     build_model,
     comment_prompt,
+    render_counts,
     load_instructions,
     system_prompt,
     validate_draft,
@@ -35,7 +36,7 @@ from shoggoth.persona import (
 from shoggoth.policy import AUTO_ACTIONS, Policy
 from shoggoth.state import State
 from shoggoth.telegram import Telegram
-from shoggoth.triage import TriageConfig, is_blocked, score
+from shoggoth.triage import TriageConfig, is_blocked, score, topic_counts
 from shoggoth.watch import WatchConfig, render_report, report_filename, scan
 
 log = logging.getLogger("shoggoth")
@@ -463,6 +464,31 @@ def cmd_propose(args: argparse.Namespace) -> int:
             candidates.append((value, observation))
     candidates.sort(key=lambda pair: pair[0], reverse=True)
 
+    # Count the whole scan before drafting anything. The persona says "lead
+    # with a number", and until this existed the prompt supplied none — so the
+    # model wrote careful prose instead, or invented a figure. These are
+    # measured, which makes them safe to state at volume.
+    counts = topic_counts(observations, config)
+    watch_counts: dict[str, int] = {}
+    if settings.watch_path.exists():
+        try:
+            from shoggoth.watch import WatchConfig as _WatchConfig
+            from shoggoth.watch import scan as _scan
+
+            for finding in _scan(observations, _WatchConfig.load(settings.watch_path)):
+                watch_counts[finding.category] = watch_counts.get(finding.category, 0) + 1
+        except Exception as exc:  # never let the brief break drafting
+            log.error("watch counts unavailable: %s", exc)
+
+    brief = render_counts(
+        counts,
+        scanned=len(observations),
+        submolts=len(config.submolts),
+        watch_counts=watch_counts or None,
+    )
+    if counts:
+        log.info("measured %d topics; leading %s", len(counts), next(iter(counts)))
+
     instructions = load_instructions(settings.instructions_path)
     system = system_prompt(instructions)
 
@@ -484,7 +510,10 @@ def cmd_propose(args: argparse.Namespace) -> int:
         if any(p.get("target") == observation.id for p in state.pending_approvals):
             continue  # already asked about this one
 
-        raw = model.complete(system, comment_prompt(observation.title, observation.content, observation.submolt))
+        raw = model.complete(
+            system,
+            comment_prompt(observation.title, observation.content, observation.submolt, brief),
+        )
         if raw is None:
             log.warning("model unavailable; skipping %s", observation.id)
             break

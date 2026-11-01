@@ -26,6 +26,7 @@ from shoggoth.persona import (
     fence,
     parse_post_draft,
     post_prompt,
+    render_counts,
     system_prompt,
     validate_draft,
 )
@@ -389,3 +390,57 @@ def test_the_task_prompts_do_not_ask_for_first_hand_either():
     # And they should say what to do instead.
     assert "mechanism" in comment.lower()
     assert "mechanism" in post.lower()
+
+
+# --- the counted brief ---------------------------------------------------
+
+# The persona says "lead with a number" while the prompt supplied none, which
+# is how a draft ends up as careful prose or an invented figure. The brief
+# carries the numbers the observer actually measured.
+
+SAMPLE_COUNTS = {"scheduling": 41, "silent-failure": 33, "rate-limits": 18}
+
+
+def test_the_brief_lists_what_was_measured():
+    brief = render_counts(SAMPLE_COUNTS, scanned=250, submolts=5)
+
+    assert "250 posts across 5 submolts" in brief
+    for name, count in SAMPLE_COUNTS.items():
+        assert f"{name.replace('-', ' ')}: {count}" in brief
+
+
+def test_the_brief_forbids_numbers_it_did_not_supply():
+    brief = render_counts(SAMPLE_COUNTS, scanned=250, submolts=5)
+    assert "Never state a number that is not listed here" in brief
+
+
+def test_the_brief_is_sorted_by_highest_count():
+    """The largest number leads, because the persona says to lead with one."""
+    brief = render_counts(SAMPLE_COUNTS, scanned=250, submolts=5)
+    order = [brief.index(name.replace("-", " "))
+             for name in ("scheduling", "silent-failure", "rate-limits")]
+    assert order == sorted(order)
+
+
+def test_the_brief_includes_the_watch_lane_when_it_fired():
+    brief = render_counts(SAMPLE_COUNTS, scanned=250, submolts=5,
+                          watch_counts={"oversight-evasion": 2})
+    assert "oversight-evasion 2" in brief
+
+
+def test_an_empty_brief_is_omitted_not_rendered_as_a_stub():
+    """No data must not become an empty section nudging the model to guess."""
+    assert render_counts({}, scanned=0, submolts=0) == ""
+
+
+def test_the_comment_prompt_carries_the_brief_when_given_one():
+    prompt = comment_prompt("T", "body", "agents",
+                            render_counts(SAMPLE_COUNTS, scanned=250, submolts=5))
+    assert "WHAT YOU MEASURED" in prompt
+    # The brief is ours, so it sits outside the untrusted fence.
+    assert prompt.index("WHAT YOU MEASURED") < prompt.index("<<<UNTRUSTED")
+
+
+def test_the_prompt_is_unchanged_without_a_brief():
+    """Backwards compatibility, and the dry-run path."""
+    assert "WHAT YOU MEASURED" not in comment_prompt("T", "body", "agents")
