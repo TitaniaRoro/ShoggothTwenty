@@ -55,49 +55,73 @@ def render_alert(title: str, detail: str) -> str:
     return f"⚠️ <b>{escape_html(title)}</b>\n\n{escape_html(detail)}"
 
 
-def render_proposal(observation, draft_text: str, score_value: float, proposal_id: str) -> str:
-    """Render a draft for human approval.
+# NOTE: render_proposal and render_post_proposal used to live here, one card
+# per draft. They were removed when approvals became batched — leaving them
+# would keep a dead renderer that still looked live, and the escaping
+# guarantee has to be tested against the function that actually ships.
 
-    The draft came from a model that read untrusted content, so it is escaped
-    exactly like a post title would be.
+BATCH_HEADING = "✍️ <b>ShoggothTwenty — drafts for review</b>"
+
+# Telegram caps a message at 4096 characters. Stay well under it so a card
+# never has to be split mid-draft, which would strand its buttons.
+BATCH_ITEM_BUDGET = 3000
+
+
+def render_batch(items: list[dict], *, start: int = 1) -> str:
+    """Render several drafts in one card, numbered to match their buttons.
+
+    Every field is untrusted — titles and bodies came from a model that read
+    other agents' posts — so all of it is escaped. We build the markup; they
+    supply only escaped text.
     """
-    submolt = escape_html(observation.submolt)
-    title = escape_html(observation.title) or "(untitled)"
-    body = escape_html(draft_text)
+    lines = [BATCH_HEADING, ""]
 
-    lines = [
-        "✍️ <b>Proposed comment</b>",
-        "",
-        f"On: <b>m/{submolt}</b> — {title}",
-        f"Match score: {score_value:.1f} · id <code>{escape_html(proposal_id)}</code>",
-        "",
-        body,
-    ]
-    url = getattr(observation, "url", None)
-    if url:
-        lines += ["", f"<a href=\"{safe_href(url)}\">open on Moltbook</a>"]
-    return "\n".join(lines)
+    for offset, item in enumerate(items):
+        number = start + offset
+        kind = "post" if item.get("kind") == "post" else "comment"
+        header = escape_html(item.get("header", "")) or "(untitled)"
+        lines.append(f"{number}. <b>{header}</b> <i>({kind})</i>")
+
+        meta = item.get("meta")
+        if meta:
+            lines.append(f"   {escape_html(meta)}")
+
+        title = item.get("title")
+        if title:
+            lines.append(f"   <b>{escape_html(title)}</b>")
+
+        url = item.get("url")
+        if url:
+            lines.append(f"   <a href=\"{safe_href(url)}\">open on Moltbook</a>")
+
+        lines.append("")
+        lines.append(escape_html(item.get("text", "")))
+        lines.append("")
+
+    lines.append("Tap ✅ to publish, ❌ to discard. Numbering matches the buttons.")
+    return "\n".join(lines).rstrip()
 
 
-def render_post_proposal(submolt: str, title: str, body: str, proposal_id: str) -> str:
-    """Render an original post for human approval.
+def chunk_items(items: list[dict], limit: int = BATCH_ITEM_BUDGET) -> list[list[dict]]:
+    """Split drafts into cards that fit Telegram's limit, keeping each whole.
 
-    Deliberately not :func:`render_proposal`: that one renders a reply, with a
-    thread to open and a title borrowed from another agent. This has no
-    thread, and the title is ours — so the card says where it would go rather
-    than what it is responding to.
-
-    Both fields came from a model that read untrusted content, so both are
-    escaped like a post title would be.
+    Items are never truncated: a draft you can only partly read is a draft you
+    should not be approving. If it does not fit, it goes on the next card.
     """
-    lines = [
-        "✍️ <b>Proposed post</b>",
-        "",
-        f"To: <b>m/{escape_html(submolt)}</b>",
-        f"id <code>{escape_html(proposal_id)}</code>",
-        "",
-        f"<b>{escape_html(title)}</b>",
-        "",
-        escape_html(body),
-    ]
-    return "\n".join(lines)
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    size = 0
+
+    for item in items:
+        cost = len(item.get("text", "")) + len(item.get("header", "")) + 120
+        # A single oversized draft still gets its own card rather than being
+        # cut: the alternative is approving text nobody can read.
+        if current and size + cost > limit:
+            groups.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += cost
+
+    if current:
+        groups.append(current)
+    return groups

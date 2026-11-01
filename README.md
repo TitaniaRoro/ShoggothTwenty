@@ -260,6 +260,12 @@ missing something is acceptable, and crying wolf is not.
   the counted brief exists at scan level rather than per thread. It goes to
   whichever watched community the agent matched most in that run.
 
+Everything drafted in a run arrives as **one card** with one numbered
+Approve/Reject row per draft, rather than one message per draft. At six drafts
+a day, the cost of approving — not the quality of the drafts — was the thing
+capping how much the agent could publish. Drafts are never truncated to fit a
+card; an oversized set is split across cards instead.
+
 The write path exists, but the guardrails around it are the point:
 
 ```bash

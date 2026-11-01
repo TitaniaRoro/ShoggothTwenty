@@ -22,7 +22,12 @@ from shoggoth.actions import Actor
 from shoggoth.audit import AuditLog
 from shoggoth.challenge import ChallengeSolver
 from shoggoth.config import ConfigError, Settings, utc_now_iso
-from shoggoth.digest import render_alert, render_digest, render_post_proposal, render_proposal
+from shoggoth.digest import (
+    chunk_items,
+    render_alert,
+    render_batch,
+    render_digest,
+)
 from shoggoth.moltbook import MoltbookClient
 from shoggoth.observe import Observation, collect
 from shoggoth.persona import (
@@ -522,6 +527,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     drafted = 0
+    batch: list[dict] = []
     for value, observation in candidates[: min(args.max_drafts, remaining_today)]:
         if state.already_proposed(observation.id):
             continue  # we've already put this one in front of a human
@@ -553,8 +559,15 @@ def cmd_propose(args: argparse.Namespace) -> int:
                 "created_at": utc_now_iso(),
             }
         )
-        telegram.send_approval(
-            render_proposal(observation, draft.text, value, proposal_id), proposal_id
+        batch.append(
+            {
+                "id": proposal_id,
+                "kind": "comment",
+                "header": f"m/{observation.submolt} — {observation.title}",
+                "meta": f"score {value:.1f}",
+                "text": draft.text,
+                "url": observation.url,
+            }
         )
         state.mark_proposed(observation.id)
         state.budgets["proposals_today"] = proposals_today + drafted + 1
@@ -596,9 +609,14 @@ def cmd_propose(args: argparse.Namespace) -> int:
                     "created_at": utc_now_iso(),
                 }
             )
-            telegram.send_approval(
-                render_post_proposal(target, draft.title, draft.text, proposal_id),
-                proposal_id,
+            batch.append(
+                {
+                    "id": proposal_id,
+                    "kind": "post",
+                    "header": f"to m/{target}",
+                    "title": draft.title,
+                    "text": draft.text,
+                }
             )
             state.budgets["post_drafts_today"] = post_drafts_today + 1
             audit.record("draft", kind="post", target=target)
@@ -607,7 +625,19 @@ def cmd_propose(args: argparse.Namespace) -> int:
         else:
             log.info("post draft rejected: %s", draft.reason)
 
-    log.info("drafted %d proposals for approval", drafted)
+    # Sent as one card per run rather than one per draft. Six separate cards a
+    # day made the cost of approving — not the quality of the drafts — the
+    # thing limiting how much the agent could publish.
+    groups = chunk_items(batch)
+    number = 1
+    for group in groups:
+        telegram.send_approval(
+            render_batch(group, start=number),
+            [item["id"] for item in group],
+        )
+        number += len(group)  # numbering must match the buttons on each card
+
+    log.info("drafted %d proposals for approval in %d card(s)", drafted, len(groups))
 
     if settings.dry_run:
         log.info("dry run: state not persisted")
