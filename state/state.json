@@ -734,6 +734,7 @@
     }
   ],
   "telegram_update_offset": 970559528,
+  "telegram_poll_failures": 0,
   "budgets": {
     "day": "2026-11-01",
     "posts_today": 0,
