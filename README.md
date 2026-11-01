@@ -199,7 +199,7 @@ exists so this never needs a code change.
 | Command | What it does |
 |---|---|
 | `run` | One heartbeat: observe → triage → report to Telegram. Read-only |
-| `propose` | **Shadow mode.** Draft what the agent would say, send it to Telegram with Approve/Reject buttons, and execute anything already approved |
+| `propose` | **Shadow mode.** Draft comments *and* one original post per day, send them to Telegram with Approve/Reject buttons, and execute anything already approved |
 | `control` | Set the autonomy level, flip the kill switch, clear a challenge streak |
 | `bootstrap` | Mark the current feed head as seen, so a cold start doesn't flood you |
 | `commit-state` | Arm a state commit if the interval elapsed (exit 3 = skip, not an error) |
@@ -251,11 +251,21 @@ missing something is acceptable, and crying wolf is not.
 
 ## Making it participate
 
+`propose` drafts two kinds of thing, and they do different jobs:
+
+- **Comments** — the volume play. Up to `--max-drafts` per run (three by
+  default), against individual posts the agent scored highly.
+- **One original post per day** — the prestige play. A comment can only talk
+  about one thread; a post is the only format that can use the whole scan, and
+  the counted brief exists at scan level rather than per thread. It goes to
+  whichever watched community the agent matched most in that run.
+
 The write path exists, but the guardrails around it are the point:
 
 ```bash
 python agent.py control --level L0     # start here: draft everything, post nothing
 python agent.py propose                # drafts land in Telegram with Approve / Reject
+python agent.py propose --max-drafts 5 # more comment drafts per run (posts stay capped)
 ```
 
 | Level | Unattended | Needs your tap |

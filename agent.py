@@ -22,12 +22,13 @@ from shoggoth.actions import Actor
 from shoggoth.audit import AuditLog
 from shoggoth.challenge import ChallengeSolver
 from shoggoth.config import ConfigError, Settings, utc_now_iso
-from shoggoth.digest import render_alert, render_digest, render_proposal
+from shoggoth.digest import render_alert, render_digest, render_post_proposal, render_proposal
 from shoggoth.moltbook import MoltbookClient
 from shoggoth.observe import Observation, collect
 from shoggoth.persona import (
     build_model,
     comment_prompt,
+    post_prompt,
     render_counts,
     load_instructions,
     system_prompt,
@@ -54,6 +55,10 @@ MAX_PROPOSALS_PER_DAY = 6
 # Consecutive failed getUpdates polls before we tell the human the
 # approval buttons are dead. Two heartbeats is noise; three is a fault.
 POLL_FAILURE_ALERT_AFTER = 3
+
+# Comments are the volume play; a post is the prestige play. One a day is
+# a cadence that reads as a considered participant rather than a feed.
+MAX_POST_DRAFTS_PER_DAY = 1
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -396,6 +401,19 @@ def _execute_approved(state: State, actor: Actor, telegram: Telegram, audit: Aud
     return executed
 
 
+def _busiest_submolt(candidates: list[tuple], config: TriageConfig) -> str:
+    """Where the agent has the most to say: the community it matched most in.
+
+    Falls back to the first watched submolt rather than a hardcoded one, so a
+    change of watch list cannot leave posts addressed nowhere.
+    """
+    tally: dict[str, int] = {}
+    for _value, observation in candidates:
+        tally[observation.submolt] = tally.get(observation.submolt, 0) + 1
+    if tally:
+        return max(tally, key=tally.get)
+    return config.submolts[0] if config.submolts else "agents"
+
 def cmd_propose(args: argparse.Namespace) -> int:
     """L0 shadow mode: draft what the agent would say, and ask a human first.
 
@@ -542,6 +560,52 @@ def cmd_propose(args: argparse.Namespace) -> int:
         state.budgets["proposals_today"] = proposals_today + drafted + 1
         audit.record("draft", kind="comment", target=observation.id, score=value)
         drafted += 1
+
+    # --- Phase 3: one original post --------------------------------------
+    # A comment can only talk about one thread. A post is the only format that
+    # can use the whole scan, which is the agent's entire advantage — and the
+    # counted brief only exists at scan level, not per thread.
+    post_drafts_today = state.budgets.get("post_drafts_today", 0)
+    if (
+        remaining_today > 0
+        and brief
+        and candidates
+        and post_drafts_today < MAX_POST_DRAFTS_PER_DAY
+    ):
+        target = _busiest_submolt(candidates, config)
+        raw = model.complete(
+            system,
+            post_prompt(
+                [{"submolt": o.submolt, "title": o.title} for _v, o in candidates[:8]],
+                [topic.name for topic in config.topics],
+                brief,
+            ),
+        )
+        draft = validate_draft(raw, "post")
+        if draft.ok:
+            proposal_id = uuid.uuid4().hex[:8]
+            state.pending_approvals.append(
+                {
+                    "id": proposal_id,
+                    "kind": "post",
+                    "target": target,
+                    "title": draft.title,
+                    "text": draft.text,
+                    "status": "pending",
+                    "score": candidates[0][0],
+                    "created_at": utc_now_iso(),
+                }
+            )
+            telegram.send_approval(
+                render_post_proposal(target, draft.title, draft.text, proposal_id),
+                proposal_id,
+            )
+            state.budgets["post_drafts_today"] = post_drafts_today + 1
+            audit.record("draft", kind="post", target=target)
+            drafted += 1
+            log.info("drafted a post for m/%s", target)
+        else:
+            log.info("post draft rejected: %s", draft.reason)
 
     log.info("drafted %d proposals for approval", drafted)
 
