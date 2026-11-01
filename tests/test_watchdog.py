@@ -109,3 +109,52 @@ def test_alerting_is_deduplicated():
 def test_a_failed_telegram_alert_does_not_fail_the_watchdog():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "non-fatal" in text
+
+
+# --- keeping CI able to run these tests ---------------------------------
+
+# CI cannot be read from the sandbox, so a missing dependency shows up only as
+# a red tick with no log to consult. These pin the wiring instead: if a test
+# ever needs a library, the install path has to exist too.
+
+DEV_REQUIREMENTS = REPO_ROOT / "requirements-dev.txt"
+CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def test_pyyaml_is_importable():
+    """The direct failure: this suite parses workflow YAML, and CI installs
+    only requirements.txt plus pytest. Without a pinned dev requirements
+    file, every test in this module errors on import while passing locally."""
+    yaml.safe_load("a: 1")
+
+
+def test_dev_requirements_exist_and_are_hash_pinned():
+    assert DEV_REQUIREMENTS.exists(), "no hash-pinned home for test dependencies"
+    text = DEV_REQUIREMENTS.read_text(encoding="utf-8")
+    assert "--hash=sha256:" in text, "dev deps must be pinned like runtime deps"
+
+
+def test_declared_dev_dependencies_are_actually_installed():
+    """Checked against the distribution, not the module: PyPI calls this one
+    pyyaml while the import is yaml, so importing by the pinned name would
+    fail for a package that is perfectly well installed."""
+    from importlib import metadata
+
+    text = DEV_REQUIREMENTS.read_text(encoding="utf-8")
+    declared = [
+        line.strip().split("==")[0].strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#") and "==" in line.split("\\")[0]
+    ]
+    assert declared, "requirements-dev.txt declares nothing"
+
+    for name in declared:
+        metadata.version(name)  # raises PackageNotFoundError if absent
+
+
+def test_ci_installs_the_dev_requirements():
+    ci = CI_YML.read_text(encoding="utf-8")
+    assert "requirements-dev.txt" in ci, (
+        "CI does not install requirements-dev.txt; tests needing it will fail "
+        "there while passing locally"
+    )
