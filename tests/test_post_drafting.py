@@ -160,7 +160,7 @@ class StubTelegram:
     def send(self, text):
         return True
 
-    def send_approval(self, text, proposal_ids):
+    def send_approval(self, text, proposal_ids, start=1):
         if isinstance(proposal_ids, str):
             proposal_ids = [proposal_ids]
         self.approvals.append((text, proposal_ids))

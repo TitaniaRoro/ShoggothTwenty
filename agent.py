@@ -316,8 +316,18 @@ def cmd_commit_state(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _finish(state: State, settings: Settings) -> int:
+    """Persist and exit. Every non-dry-run path out of a mutating command goes
+    through here, so state is never changed without being written."""
+    if settings.dry_run:
+        log.info("dry run: state not persisted")
+        return EXIT_OK
+    state.save(settings.state_path)
+    return EXIT_OK
+
+
 def cmd_pending(args: argparse.Namespace) -> int:
-    """Re-send everything still awaiting a decision, as batch cards.
+    """Collect any decisions made so far, then re-send what is still open.
 
     Drafts accumulate. Telegram only holds a button press for 24 hours, cards
     scroll out of view, and a run that drafted four things leaves four
@@ -325,17 +335,43 @@ def cmd_pending(args: argparse.Namespace) -> int:
     while the agent publishes nothing — which is what a working pipeline with
     nine drafts and zero approvals looks like from the outside.
 
+    Harvesting comes FIRST, and it is the reason this command exists in a
+    usable form. It used to only re-send: it put buttons in front of the
+    human and never asked what they pressed. Presses were collected solely by
+    the heartbeat, so when the schedule stopped firing the taps piled up in
+    Telegram with nothing reading them and the buttons looked dead. A button
+    whose press nobody collects is not a control.
+
     Re-sending is safe: a proposal is matched by id, so a second press on a
     re-sent card resolves the same proposal, and one that is already decided
     is simply skipped.
     """
-    settings = Settings.from_env(require_moltbook=False, require_telegram=True)
+    settings = Settings.from_env(require_moltbook=True, require_telegram=True)
     state = State.load(settings.state_path)
 
-    pending = [p for p in state.pending_approvals if p.get("status") == "pending"]
+    # 1. Harvest. Needs the Moltbook client because an approval is executed
+    #    here, not deferred to the next heartbeat.
+    telegram = Telegram(
+        settings.telegram_bot_token, settings.telegram_chat_id, dry_run=settings.dry_run
+    )
+    _resolve_approvals(telegram, state)
+
+    if not state.kill_switch:
+        policy = Policy.for_state(state)
+        actor = Actor(MoltbookClient(settings), policy, ChallengeSolver(state, build_model()), AuditLog())
+        executed = _execute_approved(state, actor, telegram, AuditLog())
+        if executed:
+            log.info("published %d approved action(s)", executed)
+    else:
+        log.warning("kill switch is on; approvals collected but nothing published")
+
+    pending = [p for p in state.pending_approvals if p.get("status") == STATUS_PENDING]
     if not pending:
+        # Saved, not just returned: the harvest above may have resolved the
+        # last open draft, and discarding that would also discard the poll
+        # offset — so the same press gets read again on the next run.
         log.info("nothing awaiting a decision")
-        return EXIT_OK
+        return _finish(state, settings)
 
     # Age-gate, because a re-sent card looks exactly like a fresh one. Drafts
     # made under an earlier, defective persona are still sitting in state, and
@@ -358,13 +394,13 @@ def cmd_pending(args: argparse.Namespace) -> int:
             PENDING_MAX_AGE_HOURS,
         )
     if not fresh:
+        # Still saved: the harvest above changed state even when there is
+        # nothing left to show. Returning without persisting would discard the
+        # decision AND the poll offset, so the same press is read again next
+        # run — a rejection that undoes itself, or an approval published twice.
         log.info("nothing fresh to re-send")
-        return EXIT_OK
+        return _finish(state, settings)
     pending = fresh
-
-    telegram = Telegram(
-        settings.telegram_bot_token, settings.telegram_chat_id, dry_run=settings.dry_run
-    )
 
     items = []
     for proposal in pending:
@@ -374,11 +410,16 @@ def cmd_pending(args: argparse.Namespace) -> int:
             "header": proposal.get("target", "(unknown)"),
             "text": proposal.get("text", ""),
         }
+        # Prefer what the draft was actually about; fall back to the bare
+        # target id only for proposals written before the header was stored.
+        item["header"] = proposal.get("header") or (
+            f"to m/{proposal.get('target', '?')}"
+            if proposal.get("kind") == "post"
+            else f"m/? — {proposal.get('target', '')}"
+        )
         if proposal.get("kind") == "post":
-            item["header"] = f"to m/{proposal.get('target', '?')}"
             item["title"] = proposal.get("title")
         else:
-            item["header"] = f"m/? — {proposal.get('target', '')}"
             item["meta"] = f"score {proposal.get('score', 0):.1f}"
             item["url"] = f"https://www.moltbook.com/posts/{proposal.get('target', '')}"
         age = _age_hours(proposal.get("created_at"))
@@ -390,12 +431,14 @@ def cmd_pending(args: argparse.Namespace) -> int:
     number = 1
     for group in groups:
         telegram.send_approval(
-            render_batch(group, start=number), [item["id"] for item in group]
+            render_batch(group, start=number),
+            [item["id"] for item in group],
+            start=number,
         )
         number += len(group)
 
     log.info("re-sent %d pending draft(s) in %d card(s)", len(pending), len(groups))
-    return EXIT_OK
+    return _finish(state, settings)
 
 
 def _age_hours(created_at: str | None) -> float | None:
@@ -409,6 +452,29 @@ def _age_hours(created_at: str | None) -> float | None:
     except ValueError:
         return None
     return (datetime.now(timezone.utc) - created).total_seconds() / 3600.0
+
+
+# A proposal's status is a state, not the verb that produced it. Keeping the
+# two vocabularies apart is how this broke: the poll emitted "approve", which
+# was stored verbatim, while the executor looked for "approved" — so every
+# approved draft was skipped and nothing ever published. One mapping, here.
+STATUS_PENDING = "pending"
+STATUS_APPROVED = "approved"
+STATUS_REJECTED = "rejected"
+
+# Written by older builds, before the vocabulary was unified. Accepted on read
+# so a decision made under the old naming is still honoured.
+_LEGACY_APPROVED = "approve"
+
+
+def _status_for_action(action: str) -> str:
+    """Map a button press to the status it produces."""
+    return STATUS_APPROVED if action == "approve" else STATUS_REJECTED
+
+
+def _is_approved(status: str | None) -> bool:
+    """Whether a status means 'a human said yes'. Tolerates the old verb."""
+    return status in (STATUS_APPROVED, _LEGACY_APPROVED)
 
 
 def _resolve_approvals(telegram: Telegram, state: State) -> list[dict]:
@@ -445,8 +511,8 @@ def _resolve_approvals(telegram: Telegram, state: State) -> list[dict]:
     for callback in callbacks:
         matched = None
         for proposal in state.pending_approvals:
-            if proposal.get("id") == callback["id"] and proposal.get("status") == "pending":
-                proposal["status"] = callback["action"]
+            if proposal.get("id") == callback["id"] and proposal.get("status") == STATUS_PENDING:
+                proposal["status"] = _status_for_action(callback["action"])
                 resolved.append(proposal)
                 matched = proposal
                 log.info("proposal %s %sed", callback["id"], callback["action"])
@@ -472,7 +538,7 @@ def _execute_approved(state: State, actor: Actor, telegram: Telegram, audit: Aud
     """Run the proposals a human approved. Never touches anything else."""
     executed = 0
     for proposal in list(state.pending_approvals):
-        if proposal.get("status") != "approved":
+        if not _is_approved(proposal.get("status")):
             continue
 
         kind = proposal["kind"]
@@ -502,7 +568,9 @@ def _execute_approved(state: State, actor: Actor, telegram: Telegram, audit: Aud
 
     # Keep the list bounded: finished proposals are history, not state.
     state.pending_approvals = [
-        proposal for proposal in state.pending_approvals if proposal.get("status") in ("pending", "approved")
+        proposal
+        for proposal in state.pending_approvals
+        if proposal.get("status") in (STATUS_PENDING, STATUS_APPROVED, _LEGACY_APPROVED)
     ]
     return executed
 
@@ -561,6 +629,10 @@ def _publish_or_queue(
             "score": score,
             "created_at": utc_now_iso(),
         }
+        # Stored, not recomputed: a re-sent card only has the target id in
+        # state, so without this the approval reads "m/? — 985b82eb-..." and
+        # the human is asked to approve something they cannot name.
+        entry["header"] = header
         if title:
             entry["title"] = title
         state.pending_approvals.append(entry)
@@ -823,6 +895,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
         telegram.send_approval(
             render_batch(group, start=number),
             [item["id"] for item in group],
+            start=number,
         )
         number += len(group)  # numbering must match the buttons on each card
 

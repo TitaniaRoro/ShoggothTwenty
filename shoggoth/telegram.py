@@ -159,13 +159,21 @@ class Telegram:
         log.info("sent document %s (%d bytes)", filename, len(content))
         return True
 
-    def send_approval(self, text: str, proposal_ids: str | list[str]) -> bool:
+    def send_approval(
+        self, text: str, proposal_ids: str | list[str], start: int = 1
+    ) -> bool:
         """Send drafts for human sign-off with Approve / Reject buttons.
 
         One numbered row per draft, so a whole batch is decidable from a single
         card. At six drafts a day, one message per draft meant six separate
         cards to scroll back through; the cost of approving was the real limit
         on how much the agent could publish, not the drafting itself.
+
+        `start` must match the numbering in the text. A batch is chunked into
+        several cards, and the text is numbered continuously across them — so
+        the second card reads "4." and "5." while its buttons would otherwise
+        be labelled "1" and "2". Matching a draft to the wrong button is worse
+        than having none.
 
         The heartbeat polls for the presses on a later run, so approvals need
         no webhook, no public endpoint and no long-lived process.
@@ -178,7 +186,7 @@ class Telegram:
                 {"text": f"\u2705 {number}", "callback_data": f"a:{pid}"},
                 {"text": f"\u274c {number}", "callback_data": f"r:{pid}"},
             ]
-            for number, pid in enumerate(proposal_ids, start=1)
+            for number, pid in enumerate(proposal_ids, start=start)
         ]
 
         payload: dict[str, Any] = {
