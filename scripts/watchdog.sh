@@ -12,7 +12,8 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 WORKFLOW="${WATCHDOG_WORKFLOW:-heartbeat.yml}"
-MAX_AGE_HOURS="${WATCHDOG_MAX_AGE_HOURS:-4}"
+MAX_AGE_HOURS="${WATCHDOG_MAX_AGE_HOURS:-3}"
+REF="${WATCHDOG_REF:-main}"
 
 alert() {
   local title="$1"
@@ -80,15 +81,46 @@ age_hours=$(( ( $(date -u +%s) - $(date -u -d "${last}" +%s) ) / 3600 ))
 echo "age: ${age_hours}h (threshold ${MAX_AGE_HOURS}h)"
 
 if (( age_hours >= MAX_AGE_HOURS )); then
-  alert "Heartbeat has been silent for ${age_hours} hours" \
+  # Try to restart it before reporting it. GitHub drops scheduled runs without
+  # ever creating them, so there is no red run to point at — the workflow is
+  # simply not being invoked. A manual dispatch uses a different path through
+  # GitHub's scheduler and reliably starts.
+  #
+  # This is safe to repeat: the heartbeat is idempotent. It re-reads the feed,
+  # dedupes against state, and drafts only what it has not already seen, so a
+  # catch-up run triggered from here cannot double-post.
+  restarted="no"
+  if gh workflow run "${WORKFLOW}" --repo "${REPO}" --ref "${REF}" 2>/dev/null; then
+    restarted="yes"
+    echo "re-triggered ${WORKFLOW} on ${REF}"
+  else
+    echo "could not re-trigger ${WORKFLOW} (check actions: write permission)"
+  fi
+
+  if [[ "${restarted}" == "yes" ]]; then
+    alert "Heartbeat stalled ${age_hours}h — watchdog restarted it" \
 "The last successful scheduled run of \`${WORKFLOW}\` was \`${last}\` (${age_hours}h ago),
 past the ${MAX_AGE_HOURS}h threshold.
 
-Scheduled runs can be delayed or dropped under load, but this is long enough to
-suspect a real failure. Check the Actions tab for red runs, or run the workflow
-manually to see the error."
+The watchdog dispatched a replacement run on \`${REF}\`. If the heartbeat still
+does not appear in the Actions tab, the cause is inside the workflow rather
+than the scheduler — run it manually and read the logs.
 
-  exit 1
+Scheduled runs are dropped silently by GitHub: no run, no failure, no
+notification. That is why this alerts \`success\` rather than failing — the
+watchdog did its job, and a red tick here would be misleading."
+  else
+    alert "Heartbeat has been silent for ${age_hours} hours (restart failed)" \
+"The last successful scheduled run of \`${WORKFLOW}\` was \`${last}\` (${age_hours}h ago),
+past the ${MAX_AGE_HOURS}h threshold.
+
+The watchdog tried to dispatch a replacement run and could not. Check that the
+workflow has \`actions: write\` and that \`${REF}\` is the default branch.
+
+Scheduled runs are dropped silently by GitHub — no run, no failure, no
+notification. Check the Actions tab, or run the workflow manually."
+    exit 1
+  fi
 fi
 
 echo "heartbeat is healthy"
