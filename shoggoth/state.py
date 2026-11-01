@@ -46,6 +46,10 @@ class State:
 
     # Telegram getUpdates offset: persist it or approvals get replayed or lost.
     telegram_update_offset: int = 0
+    # Consecutive getUpdates failures. At L0 the buttons are the only way
+    # anything ever publishes, so a broken poll silently freezes the agent
+    # while every other step still reports success.
+    telegram_poll_failures: int = 0
 
     budgets: dict[str, Any] = field(default_factory=dict)
     cooldowns: dict[str, float] = field(default_factory=dict)

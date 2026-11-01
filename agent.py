@@ -50,6 +50,10 @@ STATE_COMMIT_INTERVAL_MINUTES = 60
 # 30-minute cadence would be 144 approval requests a day.
 MAX_PROPOSALS_PER_DAY = 6
 
+# Consecutive failed getUpdates polls before we tell the human the
+# approval buttons are dead. Two heartbeats is noise; three is a fault.
+POLL_FAILURE_ALERT_AFTER = 3
+
 
 def _configure_logging(verbose: bool) -> None:
     logging.basicConfig(
@@ -299,16 +303,56 @@ def _resolve_approvals(telegram: Telegram, state: State) -> list[dict]:
     """Collect button presses since the last heartbeat and apply them."""
     callbacks, offset = telegram.poll_callbacks(state.telegram_update_offset)
     state.telegram_update_offset = offset
+
+    if callbacks is None:
+        # The poll itself failed. This is not "the human pressed nothing" — at
+        # L0 the buttons are the only route to publishing, so a poll that keeps
+        # failing freezes the agent while every other step still reports
+        # success. Say so after a few, rather than staying quiet forever.
+        state.telegram_poll_failures = getattr(state, "telegram_poll_failures", 0) + 1
+        if state.telegram_poll_failures >= POLL_FAILURE_ALERT_AFTER:
+            telegram.send(
+                render_alert(
+                    "Approval buttons are not working",
+                    f"getUpdates has failed on {state.telegram_poll_failures} "
+                    "consecutive heartbeats, so no Approve or Reject press is "
+                    "being read. Nothing will publish until this is fixed. "
+                    "Check the run log for the Telegram error.",
+                )
+            )
+        return []
+
+    if state.telegram_poll_failures:
+        log.info("telegram poll recovered after %d failures", state.telegram_poll_failures)
+    state.telegram_poll_failures = 0
+
     if not callbacks:
         return []
 
     resolved = []
     for callback in callbacks:
+        matched = None
         for proposal in state.pending_approvals:
             if proposal.get("id") == callback["id"] and proposal.get("status") == "pending":
                 proposal["status"] = callback["action"]
                 resolved.append(proposal)
+                matched = proposal
                 log.info("proposal %s %sed", callback["id"], callback["action"])
+                break
+
+        # Confirm the tap in the chat either way. Without it the button keeps
+        # spinning and a press that succeeded is indistinguishable from one
+        # that vanished — which is how this looked "broken" while working.
+        if callback["action"] == "approve":
+            note = "Approved — queued to publish" if matched else "Expired: no pending draft matches"
+        else:
+            note = "Rejected — discarded" if matched else "Already handled"
+        if matched is None:
+            log.warning(
+                "button press for %s matched no pending proposal (stale card?)",
+                callback["id"],
+            )
+        telegram.answer_callback(callback.get("query_id"), note)
     return resolved
 
 

@@ -12,6 +12,7 @@ Two rules, both of which matter more here than in most bots:
 from __future__ import annotations
 
 import html
+import json
 import logging
 import time
 from typing import Any
@@ -197,11 +198,43 @@ class Telegram:
             return False
         return True
 
-    def poll_callbacks(self, offset: int) -> tuple[list[dict], int]:
+    def answer_callback(self, query_id: str | None, text: str = "") -> bool:
+        """Acknowledge a button press.
+
+        Purely a client-side courtesy, and a necessary one: until this is
+        called the button stays in its loading state and the chat shows no
+        confirmation, so a press that worked looks identical to one that
+        didn't.
+        """
+        if not query_id or self.dry_run:
+            return True
+
+        try:
+            response = self.session.post(
+                f"{self._base}/answerCallbackQuery",
+                json={"callback_query_id": query_id, "text": text},
+                timeout=10,
+            )
+            body = response.json()
+        except requests.RequestException as exc:
+            log.error("answerCallbackQuery failed: %s", exc)
+            return False
+
+        if not body.get("ok"):
+            log.error("answerCallbackQuery rejected: %s", body.get("description"))
+            return False
+        return True
+
+    def poll_callbacks(self, offset: int) -> tuple[list[dict] | None, int]:
         """Fetch pending button presses.
 
-        Returns (callbacks, next_offset). The offset must be persisted by the
-        caller so an approval is never processed twice — or never at all.
+        Returns (callbacks, next_offset), or (None, offset) when the poll
+        itself failed. None is not the same as []: an empty list means the
+        human has pressed nothing, None means we could not ask. Callers must
+        not treat them alike, or a dead poll looks like a quiet human.
+
+        The offset must be persisted by the caller so an approval is never
+        processed twice — or never at all.
         """
         if self.dry_run:
             return [], offset
@@ -209,17 +242,29 @@ class Telegram:
         try:
             response = self.session.get(
                 f"{self._base}/getUpdates",
-                params={"offset": offset, "timeout": 0, "allowed_updates": ["callback_query"]},
+                params={
+                    "offset": offset,
+                    "timeout": 0,
+                    # Telegram wants a JSON-serialized array here. Passing a
+                    # Python list makes requests send
+                    # allowed_updates=callback_query, which the API rejects —
+                    # getUpdates then never succeeds, no press is ever read,
+                    # and the buttons look dead while logging nothing useful.
+                    "allowed_updates": json.dumps(["callback_query"]),
+                },
                 timeout=25,
             )
             body = response.json()
         except (requests.RequestException, ValueError) as exc:
             log.error("getUpdates failed: %s", exc)
-            return [], offset
+            return None, offset
 
         if not body.get("ok"):
+            # Returned rather than raised so one bad poll cannot kill a run —
+            # but the caller counts these, because a poll that always fails
+            # means no approval ever lands and nothing ever publishes.
             log.error("getUpdates rejected: %s", body.get("description"))
-            return [], offset
+            return None, offset
 
         callbacks: list[dict] = []
         next_offset = offset
@@ -233,7 +278,11 @@ class Telegram:
                 continue
             action, _, proposal_id = data.partition(":")
             if action in ("a", "r") and proposal_id:
-                callbacks.append({"action": "approve" if action == "a" else "reject", "id": proposal_id})
+                callbacks.append({
+                    "action": "approve" if action == "a" else "reject",
+                    "id": proposal_id,
+                    "query_id": query.get("id"),
+                })
 
         return callbacks, next_offset
 
