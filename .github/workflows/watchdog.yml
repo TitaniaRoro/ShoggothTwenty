@@ -2,15 +2,27 @@ name: watchdog
 
 on:
   schedule:
-    # Daily, at an off-peak minute. This workflow is itself subject to the 60-day
-    # inactivity rule, which the heartbeat's state commits keep satisfied.
+    # Every two hours at an off-peak minute, plus a daily sweep.
+    #
+    # This used to be daily, which was fine when the heartbeat ran 48 times a
+    # day. It does not: GitHub has been dropping the heartbeat's schedule
+    # entirely — ten consecutive slots, no runs, no cancellations, just
+    # nothing. A watchdog that checks once a day can be up to 24 hours late
+    # to a fault it could have fixed itself.
+    #
+    # Every entry is a separate chance to run, since dropped schedules appear
+    # to be per-slot rather than per-workflow.
     - cron: '37 5 * * *'
+    - cron: '41 1,3,5,7,9,11,13,15,17,19,21,23 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
   issues: write
-  actions: read
+  # write, not read: the watchdog re-triggers a stalled heartbeat via
+  # `gh workflow run`. Alerting about a stopped agent while having the means
+  # to restart it is the wrong side of the line.
+  actions: write
 
 jobs:
   check:

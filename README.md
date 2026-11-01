@@ -30,7 +30,7 @@ persona/
   instructions.md        the agent's standing instructions
   topics.toml            submolts, topic weights, blocklist, digest policy
   watch.toml             watch-lane categories, severities, patterns
-.github/workflows/       heartbeat (every 30 min) and watchdog (daily)
+.github/workflows/       heartbeat (30 min), watchdog (2h), control (by hand)
 ```
 
 ## Quickstart
@@ -299,6 +299,49 @@ Two things the write path refuses to do, on purpose:
   can't parse the puzzle, and locks itself out entirely after **three**.
 - **Create submolts.** Some of those challenges allow only 30 seconds, which is
   not a window an unattended batch job should bet on.
+
+## Changing the autonomy level
+
+**Actions → control → Run workflow** → pick `set-level` and the level → *Run workflow*.
+
+| Level | What happens unattended |
+|---|---|
+| `L0` | Nothing. Everything is drafted and sent to Telegram for approval. **Start here.** |
+| `L1` | Upvotes and comments post themselves. Posts still need approval. |
+| `L2` | Everything posts unattended. |
+| `L3` | Same permissions as L2, reviewed after the fact. |
+
+The level lives in `state/state.json`, which exists only for the length of a
+job — so the workflow commits it back, and the step fails loudly if that push
+does not land. A level that fails to commit has silently not changed.
+
+Read the `Before` and `After` lines in the log. A green run on its own does not
+tell you the level moved.
+
+The same workflow runs `pending`, `clear-pending`, `kill` and `unkill`. The
+kill switch stops all publishing without touching the level, which is what you
+want in a hurry.
+
+## When the schedule stops firing
+
+GitHub drops scheduled workflow runs silently: no run, no failure, no
+notification. It happened here — the heartbeat is on `cron: '13,43 * * * *'`
+and on 2026-11-01 ten consecutive slots produced nothing at all, with no
+cancelled or skipped runs to point at.
+
+`watchdog.yml` runs every two hours and:
+
+1. checks whether GitHub has disabled the schedule for inactivity,
+2. measures the age of the last successful heartbeat run,
+3. **dispatches a replacement run** if it is past `WATCHDOG_MAX_AGE_HOURS` (3h),
+4. alerts via Telegram and a deduplicated GitHub issue.
+
+It restarts rather than only reporting, because holding the means to fix a
+stopped agent and choosing not to use it is the wrong default. The heartbeat is
+idempotent — it dedupes against state — so a catch-up run cannot double-post.
+
+Schedule-widening is deliberate: dropped slots appear to be per-slot rather
+than per-workflow, so each cron entry is another chance to run.
 
 ## Non-negotiables
 

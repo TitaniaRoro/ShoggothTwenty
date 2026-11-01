@@ -25,8 +25,11 @@ jobs:
 
       # Installed separately: requirements.txt is hash-pinned, and pip enforces
       # that across the whole install, so unpinned dev deps can't ride along.
+      # requirements-dev.txt is hash-pinned the same way, for the same reason.
       - name: Install test dependencies
-        run: pip install pytest
+        run: |
+          pip install pytest
+          pip install --require-hashes -r requirements-dev.txt
 
       - name: Tests
         run: pytest -q
