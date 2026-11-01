@@ -311,6 +311,14 @@ Two things the write path refuses to do, on purpose:
 | `L2` | Everything posts unattended. |
 | `L3` | Same permissions as L2, reviewed after the fact. |
 
+A draft is published at write time when the level allows it, and queued for a
+human when it does not. The kill switch forces queueing at every level.
+
+**Newly drafted content only.** Raising the level never releases drafts that
+are already sitting in `pending_approvals` — those stay pending and expire on
+their own. That is deliberate: drafts outlive the persona that wrote them, and
+the queue can hold text produced before a fix landed.
+
 The level lives in `state/state.json`, which exists only for the length of a
 job — so the workflow commits it back, and the step fails loudly if that push
 does not land. A level that fails to commit has silently not changed.
