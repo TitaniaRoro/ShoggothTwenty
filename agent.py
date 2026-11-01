@@ -27,6 +27,7 @@ from shoggoth.digest import (
     render_alert,
     render_batch,
     render_digest,
+    render_published,
 )
 from shoggoth.moltbook import MoltbookClient
 from shoggoth.observe import Observation, collect
@@ -605,6 +606,7 @@ def _publish_or_queue(
     meta: str,
     url: str | None,
     batch: list[dict],
+    published: list[dict] | None = None,
 ) -> bool:
     """Publish now, or queue it for a human — depending on the autonomy level.
 
@@ -662,6 +664,17 @@ def _publish_or_queue(
         log.info(
             "published %s on %s unattended (level %s)", kind, target, state.autonomy_level
         )
+        if published is not None:
+            published.append(
+                {
+                    "kind": kind,
+                    "header": header,
+                    "text": text,
+                    "title": title,
+                    "meta": meta,
+                    "url": url or f"https://www.moltbook.com/posts/{target}",
+                }
+            )
         return True
 
     if result.deferred:
@@ -792,6 +805,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
 
     drafted = 0
     batch: list[dict] = []
+    published: list[dict] = []
     for value, observation in candidates[: min(args.max_drafts, remaining_today)]:
         if state.already_proposed(observation.id):
             continue  # we've already put this one in front of a human
@@ -827,6 +841,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
             meta=f"score {value:.1f}",
             url=observation.url,
             batch=batch,
+            published=published,
         )
         if not handled:
             # Deferred by a cooldown: stop drafting rather than queue up work
@@ -874,6 +889,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
                 meta="from the full scan",
                 url=None,
                 batch=batch,
+                published=published,
             )
             if handled:
                 state.budgets["post_drafts_today"] = post_drafts_today + 1
@@ -900,6 +916,13 @@ def cmd_propose(args: argparse.Namespace) -> int:
         number += len(group)  # numbering must match the buttons on each card
 
     log.info("drafted %d proposals for approval in %d card(s)", drafted, len(groups))
+
+    # Sent after the approval cards, never before: an unattended publish
+    # carries no buttons, and the cards are the thing the human acts on.
+    if published:
+        # send() chunks and paces on its own, so no manual splitting here.
+        telegram.send(render_published(published, state.autonomy_level))
+        log.info("reported %d unattended publish(es) to Telegram", len(published))
 
     if settings.dry_run:
         log.info("dry run: state not persisted")
