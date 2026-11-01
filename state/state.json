@@ -3,7 +3,7 @@
   "last_run_at": "2026-11-01T06:51:58Z",
   "last_notify_at": "2026-10-31T17:56:18Z",
   "last_state_commit_at": "2026-11-01T06:52:01Z",
-  "autonomy_level": "L0",
+  "autonomy_level": "L1",
   "kill_switch": false,
   "seen": {
     "1080b73e-6f7b-476e-89d5-55f9cc39dc2b": "2026-11-01T06:13:26.736Z",
