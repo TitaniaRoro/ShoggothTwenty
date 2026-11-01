@@ -13,7 +13,11 @@ on:
     # Every entry is a separate chance to run, since dropped schedules appear
     # to be per-slot rather than per-workflow.
     - cron: '37 5 * * *'
-    - cron: '41 1,3,5,7,9,11,13,15,17,19,21,23 * * *'
+    # Every 30 minutes, not every two hours. Same reasoning as the heartbeat:
+    # roughly one slot in ten survives, so 12 slots a day produced about one
+    # watchdog run - which meant a stalled heartbeat could sit undetected for
+    # most of a day. At 48 slots the check lands often enough to matter.
+    - cron: '11,41 * * * *'
   workflow_dispatch:
 
 permissions:
