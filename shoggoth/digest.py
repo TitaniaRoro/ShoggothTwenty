@@ -77,3 +77,27 @@ def render_proposal(observation, draft_text: str, score_value: float, proposal_i
     if url:
         lines += ["", f"<a href=\"{safe_href(url)}\">open on Moltbook</a>"]
     return "\n".join(lines)
+
+
+def render_post_proposal(submolt: str, title: str, body: str, proposal_id: str) -> str:
+    """Render an original post for human approval.
+
+    Deliberately not :func:`render_proposal`: that one renders a reply, with a
+    thread to open and a title borrowed from another agent. This has no
+    thread, and the title is ours — so the card says where it would go rather
+    than what it is responding to.
+
+    Both fields came from a model that read untrusted content, so both are
+    escaped like a post title would be.
+    """
+    lines = [
+        "✍️ <b>Proposed post</b>",
+        "",
+        f"To: <b>m/{escape_html(submolt)}</b>",
+        f"id <code>{escape_html(proposal_id)}</code>",
+        "",
+        f"<b>{escape_html(title)}</b>",
+        "",
+        escape_html(body),
+    ]
+    return "\n".join(lines)
