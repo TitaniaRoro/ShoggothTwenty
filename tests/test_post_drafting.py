@@ -17,34 +17,81 @@ from pathlib import Path
 
 import pytest
 
-from shoggoth.digest import render_post_proposal
+from shoggoth.digest import chunk_items, render_batch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-# --- the approval card ---------------------------------------------------
+# --- the batch card ------------------------------------------------------
 
 
-def test_a_post_card_says_where_it_would_go():
-    """A post has no thread, so the card names the destination community
-    rather than the thing it is replying to."""
-    card = render_post_proposal("agents", "A title", "A body.", "abc12345")
-
-    assert "m/agents" in card
-    assert "Proposed post" in card
-    assert "abc12345" in card
+def _item(**kwargs):
+    base = {"id": "abc12345", "kind": "comment", "header": "m/agents — A title",
+            "text": "A body."}
+    base.update(kwargs)
+    return base
 
 
-def test_a_post_card_escapes_the_model_output():
-    """Both fields came from a model that read untrusted posts."""
-    card = render_post_proposal(
-        "agents", "<script>alert(1)</script>", "body with <b>tags</b> & ampersands", "abc12345"
-    )
+def test_a_batch_card_numbers_drafts_to_match_its_buttons():
+    card = render_batch([_item(), _item(header="m/security — Second")])
+
+    assert "1." in card and "2." in card
+    assert "m/security — Second" in card
+
+
+def test_a_batch_card_escapes_the_model_output():
+    """Every field came from a model that read other agents' posts."""
+    card = render_batch([
+        _item(header="<script>alert(1)</script>",
+              text="body with <b>tags</b> & ampersands",
+              title="<img onerror=1>")
+    ])
 
     assert "<script>" not in card
     assert "&lt;script&gt;" in card
     assert "<b>tags</b>" not in card
-    assert "&lt;b&gt;tags&lt;/b&gt;" in card
+    assert "&lt;img onerror=1&gt;" in card
+
+
+def test_a_post_in_a_batch_is_labelled_and_titled():
+    """A post has no thread, so the card names where it would go."""
+    card = render_batch([_item(kind="post", header="to m/agents", title="A title")])
+
+    assert "(post)" in card
+    assert "to m/agents" in card
+    assert "A title" in card
+
+
+def test_a_batch_only_links_to_urls_we_constructed():
+    card = render_batch([_item(url="https://www.moltbook.com/posts/aaaa1111")])
+    assert "moltbook.com/posts/aaaa1111" in card
+
+
+def test_drafts_are_never_truncated_to_fit_a_card():
+    """A draft you can only partly read is a draft you should not approve.
+    An oversized set is split across cards, never cut mid-draft."""
+    items = [_item(text="x" * 1400) for _ in range(4)]
+    groups = chunk_items(items, limit=3000)
+
+    assert len(groups) > 1
+    assert sum(len(g) for g in groups) == len(items)
+    for group in groups:
+        for item in group:
+            assert item["text"] == "x" * 1400  # whole, not clipped
+
+
+def test_one_oversized_draft_still_gets_its_own_card():
+    """It will exceed the limit, and that is better than cutting it — the
+    buttons stay attached and the human can still read the whole thing."""
+    groups = chunk_items([_item(text="y" * 9000)], limit=3000)
+    assert len(groups) == 1
+
+
+def test_chunking_preserves_order_so_numbering_stays_correct():
+    items = [_item(text=f"draft {n}") for n in range(5)]
+    groups = chunk_items(items, limit=900)
+    flattened = [i["text"] for group in groups for i in group]
+    assert flattened == [f"draft {n}" for n in range(5)]
 
 
 # --- choosing the community ----------------------------------------------
@@ -113,8 +160,10 @@ class StubTelegram:
     def send(self, text):
         return True
 
-    def send_approval(self, text, proposal_id):
-        self.approvals.append((text, proposal_id))
+    def send_approval(self, text, proposal_ids):
+        if isinstance(proposal_ids, str):
+            proposal_ids = [proposal_ids]
+        self.approvals.append((text, proposal_ids))
         return True
 
     def send_document(self, *args, **kwargs):
@@ -224,3 +273,69 @@ def test_a_post_leaking_a_url_is_rejected(propose, monkeypatch):
 
     assert not [p for p in state.pending_approvals if p["kind"] == "post"]
     assert not telegram.approvals
+
+
+# --- batching ------------------------------------------------------------
+
+
+class TalkativeModel(StubModel):
+    """Drafts a comment for everything, unlike StubModel which declines them."""
+
+    def complete(self, system, prompt):
+        if "Draft ONE Moltbook post" in prompt:
+            return self.post
+        return "A specific, mechanism-shaped comment about the failure mode."
+
+
+def test_a_run_sends_one_card_not_one_per_draft(propose, monkeypatch):
+    """The point of batching: six drafts were six cards to scroll back
+    through. Approving cost more attention than the drafts deserved."""
+    import agent
+
+    monkeypatch.setattr(agent, "build_model", lambda *a, **k: TalkativeModel())
+    _code, telegram, state = propose()
+
+    pending = [p for p in state.pending_approvals if p["status"] == "pending"]
+    assert len(pending) >= 2, "need more than one draft for this to mean anything"
+    assert len(telegram.approvals) == 1, "drafts must share a card"
+
+
+def test_every_draft_on_a_card_gets_its_own_button_row(propose, monkeypatch):
+    """A row per draft, or the numbers on the card mean nothing."""
+    import agent
+
+    monkeypatch.setattr(agent, "build_model", lambda *a, **k: TalkativeModel())
+    _code, telegram, state = propose()
+
+    _text, ids = telegram.approvals[0]
+    pending_ids = {p["id"] for p in state.pending_approvals if p["status"] == "pending"}
+    assert set(ids) <= pending_ids
+    assert len(ids) == len(set(ids)), "each draft gets exactly one row"
+
+
+def test_a_single_draft_still_sends_one_card(propose, monkeypatch):
+    """The batch path must not assume there is more than one."""
+    import agent
+
+    monkeypatch.setattr(agent, "build_model", lambda *a, **k: StubModel())
+    _code, telegram, _state = propose()
+
+    assert len(telegram.approvals) == 1
+    assert len(telegram.approvals[0][1]) == 1
+
+
+def test_nothing_is_sent_when_every_draft_is_declined(propose, monkeypatch):
+    """No drafts means no card, not an empty one."""
+    import agent
+
+    class Silent:
+        name = "silent"
+
+        def complete(self, system, prompt):
+            return "SKIP"
+
+    monkeypatch.setattr(agent, "build_model", lambda *a, **k: Silent())
+    _code, telegram, state = propose()
+
+    assert not telegram.approvals
+    assert not state.pending_approvals

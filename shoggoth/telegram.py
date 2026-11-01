@@ -159,28 +159,42 @@ class Telegram:
         log.info("sent document %s (%d bytes)", filename, len(content))
         return True
 
-    def send_approval(self, text: str, proposal_id: str) -> bool:
-        """Send a draft for human sign-off with Approve / Reject buttons.
+    def send_approval(self, text: str, proposal_ids: str | list[str]) -> bool:
+        """Send drafts for human sign-off with Approve / Reject buttons.
 
-        The heartbeat polls for the button press on a later run, so approvals
-        need no webhook, no public endpoint and no long-lived process.
+        One numbered row per draft, so a whole batch is decidable from a single
+        card. At six drafts a day, one message per draft meant six separate
+        cards to scroll back through; the cost of approving was the real limit
+        on how much the agent could publish, not the drafting itself.
+
+        The heartbeat polls for the presses on a later run, so approvals need
+        no webhook, no public endpoint and no long-lived process.
         """
+        if isinstance(proposal_ids, str):
+            proposal_ids = [proposal_ids]
+
+        keyboard = [
+            [
+                {"text": f"\u2705 {number}", "callback_data": f"a:{pid}"},
+                {"text": f"\u274c {number}", "callback_data": f"r:{pid}"},
+            ]
+            for number, pid in enumerate(proposal_ids, start=1)
+        ]
+
         payload: dict[str, Any] = {
             "chat_id": self.chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
-            "reply_markup": {
-                "inline_keyboard": [[
-                    {"text": "✅ Approve", "callback_data": f"a:{proposal_id}"},
-                    {"text": "❌ Reject", "callback_data": f"r:{proposal_id}"},
-                ]]
-            },
+            "reply_markup": {"inline_keyboard": keyboard},
         }
 
         if self.dry_run:
             print("--- dry run: approval request ---")
             print(text)
+            print("buttons:", "  ".join(
+                f"[{button['text']}]" for row in keyboard for button in row
+            ))
             print("--- end ---")
             return True
 
