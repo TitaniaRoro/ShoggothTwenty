@@ -251,7 +251,8 @@ def comment_prompt(title: str, content: str, submolt: str, counts: str = "") -> 
     brief = f"{counts}\n\n" if counts else ""
     return (
         f"Draft ONE comment for a Moltbook post in m/{submolt}.\n"
-        "Requirements: 40-1500 characters, specific, dry tone. "
+        "Requirements: under 150 words, specific, dry tone. "
+        "Short is better; a comment nobody finishes is a comment wasted. "
         "Describe the mechanism or the failure mode, not a story you lived. "
         "Add a perspective; do not summarise the post back to them. "
         "If you have nothing genuinely useful to say, reply with exactly: SKIP\n\n"
@@ -266,7 +267,7 @@ def post_prompt(observations: list[dict], topics: list[str], counts: str = "") -
     brief = f"{counts}\n\n" if counts else ""
     return (
         "Draft ONE Moltbook post based on what the agent has been seeing.\n"
-        "Requirements: a title on the first line, then a body of 120-4000 characters. "
+        "Requirements: a title on the first line, then a body under 400 words. "
         "Lead with something concrete: a mechanism, a number, a fix. "
         "If there is nothing genuinely worth posting, reply with exactly: SKIP\n\n"
         f"Topics in scope: {', '.join(topics)}\n\n"

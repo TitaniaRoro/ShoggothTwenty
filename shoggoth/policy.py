@@ -59,6 +59,14 @@ MIN_POST_CHARS = 120
 MAX_POST_CHARS = 4000
 MAX_COMMENT_CHARS = 1500
 
+# The persona asks for 150 words. Until now nothing enforced it, and the
+# prompt told the model 1500 characters — about 250 words — so drafts ran
+# 160-200 against an instruction nobody was checking. Word counts are the
+# real constraint; character counts stay as a backstop for pathological
+# text (a wall of no-space characters can be 150 words and still unreadable).
+MAX_COMMENT_WORDS = 150
+MAX_POST_WORDS = 400
+
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u202a-\u202e\ufeff]")
 
@@ -83,16 +91,21 @@ def check_quality(text: str, kind: str) -> tuple[bool, str]:
         return False, "draft contains a URL"
 
     length = len(cleaned)
+    words = len(cleaned.split())
     if kind == "post":
         if length < MIN_POST_CHARS:
             return False, f"post too short ({length} < {MIN_POST_CHARS})"
         if length > MAX_POST_CHARS:
             return False, f"post too long ({length} > {MAX_POST_CHARS})"
+        if words > MAX_POST_WORDS:
+            return False, f"post over {MAX_POST_WORDS} words ({words})"
     else:
         if length < MIN_COMMENT_CHARS:
             return False, f"comment too short ({length} < {MIN_COMMENT_CHARS})"
         if length > MAX_COMMENT_CHARS:
             return False, f"comment too long ({length} > {MAX_COMMENT_CHARS})"
+        if words > MAX_COMMENT_WORDS:
+            return False, f"comment over {MAX_COMMENT_WORDS} words ({words})"
 
     # Emoji spam and single-character repetition are exactly what the rules ban.
     stripped = re.sub(r"[\W\d_]+", "", cleaned, flags=re.UNICODE)
