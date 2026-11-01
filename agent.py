@@ -520,6 +520,97 @@ def _busiest_submolt(candidates: list[tuple], config: TriageConfig) -> str:
         return max(tally, key=tally.get)
     return config.submolts[0] if config.submolts else "agents"
 
+def _publish_or_queue(
+    *,
+    state: State,
+    policy: Policy,
+    actor: Actor,
+    telegram: Telegram,
+    audit: AuditLog,
+    kind: str,
+    target: str,
+    text: str,
+    title: str | None,
+    score: float,
+    observation_id: str,
+    header: str,
+    meta: str,
+    url: str | None,
+    batch: list[dict],
+) -> bool:
+    """Publish now, or queue it for a human — depending on the autonomy level.
+
+    Returns True if it was handled either way (so the caller counts it), and
+    False only when the run should stop drafting.
+
+    This branch is the entire autonomy ladder. Without it every level behaved
+    identically: drafts always went into pending_approvals, and the only thing
+    that ever published anything was a Telegram Approve tap. The levels were
+    real in Policy and real in the UI, and had no effect on the agent.
+    """
+    import uuid
+
+    if policy.needs_approval(kind):
+        proposal_id = uuid.uuid4().hex[:8]
+        entry = {
+            "id": proposal_id,
+            "kind": kind,
+            "target": target,
+            "text": text,
+            "status": "pending",
+            "score": score,
+            "created_at": utc_now_iso(),
+        }
+        if title:
+            entry["title"] = title
+        state.pending_approvals.append(entry)
+        batch.append(
+            {
+                "id": proposal_id,
+                "kind": kind,
+                "header": header,
+                "meta": meta,
+                "text": text,
+                "url": url,
+                **({"title": title} if title else {}),
+            }
+        )
+        audit.record("draft", kind=kind, target=target, score=score)
+        return True
+
+    # The level permits this without a human tap.
+    result = (
+        actor.create_post(target, title or "", text)
+        if kind == "post"
+        else actor.create_comment(target, text)
+    )
+
+    if result.ok:
+        audit.record("auto_published", kind=kind, target=target, score=score)
+        log.info(
+            "published %s on %s unattended (level %s)", kind, target, state.autonomy_level
+        )
+        return True
+
+    if result.deferred:
+        # Cooldown or daily cap. Leave the observation unmarked so a later
+        # heartbeat can pick it up again rather than burning the candidate.
+        log.info("%s deferred: %s", kind, result.error)
+        return False
+
+    log.warning("unattended %s failed on %s: %s", kind, target, result.error)
+    audit.record("auto_publish_failed", kind=kind, target=target, error=result.error)
+    telegram.send(
+        render_alert(
+            "Unattended publish failed",
+            f"{kind} on {target}: {result.error}\n\n"
+            f"This ran at level {state.autonomy_level} without approval. "
+            "It did not publish. Drop to L0 if you would rather approve by hand.",
+        )
+    )
+    return True
+
+
 def cmd_propose(args: argparse.Namespace) -> int:
     """L0 shadow mode: draft what the agent would say, and ask a human first.
 
@@ -648,31 +739,29 @@ def cmd_propose(args: argparse.Namespace) -> int:
             log.info("draft rejected for %s: %s", observation.id, draft.reason)
             continue
 
-        proposal_id = uuid.uuid4().hex[:8]
-        state.pending_approvals.append(
-            {
-                "id": proposal_id,
-                "kind": "comment",
-                "target": observation.id,
-                "text": draft.text,
-                "status": "pending",
-                "score": value,
-                "created_at": utc_now_iso(),
-            }
+        handled = _publish_or_queue(
+            state=state,
+            policy=policy,
+            actor=actor,
+            telegram=telegram,
+            audit=audit,
+            kind="comment",
+            target=observation.id,
+            text=draft.text,
+            title=None,
+            score=value,
+            observation_id=observation.id,
+            header=f"m/{observation.submolt} — {observation.title}",
+            meta=f"score {value:.1f}",
+            url=observation.url,
+            batch=batch,
         )
-        batch.append(
-            {
-                "id": proposal_id,
-                "kind": "comment",
-                "header": f"m/{observation.submolt} — {observation.title}",
-                "meta": f"score {value:.1f}",
-                "text": draft.text,
-                "url": observation.url,
-            }
-        )
+        if not handled:
+            # Deferred by a cooldown: stop drafting rather than queue up work
+            # that cannot go out this run.
+            break
         state.mark_proposed(observation.id)
         state.budgets["proposals_today"] = proposals_today + drafted + 1
-        audit.record("draft", kind="comment", target=observation.id, score=value)
         drafted += 1
 
     # --- Phase 3: one original post --------------------------------------
@@ -697,32 +786,31 @@ def cmd_propose(args: argparse.Namespace) -> int:
         )
         draft = validate_draft(raw, "post")
         if draft.ok:
-            proposal_id = uuid.uuid4().hex[:8]
-            state.pending_approvals.append(
-                {
-                    "id": proposal_id,
-                    "kind": "post",
-                    "target": target,
-                    "title": draft.title,
-                    "text": draft.text,
-                    "status": "pending",
-                    "score": candidates[0][0],
-                    "created_at": utc_now_iso(),
-                }
+            handled = _publish_or_queue(
+                state=state,
+                policy=policy,
+                actor=actor,
+                telegram=telegram,
+                audit=audit,
+                kind="post",
+                target=target,
+                text=draft.text,
+                title=draft.title,
+                score=candidates[0][0],
+                observation_id=target,
+                header=f"to m/{target}",
+                meta="from the full scan",
+                url=None,
+                batch=batch,
             )
-            batch.append(
-                {
-                    "id": proposal_id,
-                    "kind": "post",
-                    "header": f"to m/{target}",
-                    "title": draft.title,
-                    "text": draft.text,
-                }
-            )
-            state.budgets["post_drafts_today"] = post_drafts_today + 1
-            audit.record("draft", kind="post", target=target)
-            drafted += 1
-            log.info("drafted a post for m/%s", target)
+            if handled:
+                state.budgets["post_drafts_today"] = post_drafts_today + 1
+                drafted += 1
+                log.info(
+                    "%s a post for m/%s",
+                    "published" if not policy.needs_approval("post") else "drafted",
+                    target,
+                )
         else:
             log.info("post draft rejected: %s", draft.reason)
 
