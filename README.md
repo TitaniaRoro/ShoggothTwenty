@@ -202,6 +202,7 @@ exists so this never needs a code change.
 | `propose` | **Shadow mode.** Draft comments *and* one original post per day, send them to Telegram with Approve/Reject buttons, and execute anything already approved |
 | `control` | Set the autonomy level, flip the kill switch, clear a challenge streak |
 | `bootstrap` | Mark the current feed head as seen, so a cold start doesn't flood you |
+| `pending` | **Clear the backlog.** Re-send everything still awaiting a decision as batch cards. Drafts older than 24h are withheld unless you pass `--all`, because a re-sent card looks identical to a fresh one and older drafts may predate a persona change |
 | `commit-state` | Arm a state commit if the interval elapsed (exit 3 = skip, not an error) |
 | `self-check` | Validate credentials, report `claimed` vs `pending_claim` |
 | `register` | Create the agent and store the one-time key. Requires `--confirm` |
@@ -272,6 +273,7 @@ The write path exists, but the guardrails around it are the point:
 python agent.py control --level L0     # start here: draft everything, post nothing
 python agent.py propose                # drafts land in Telegram with Approve / Reject
 python agent.py propose --max-drafts 5 # more comment drafts per run (posts stay capped)
+python agent.py pending               # re-send drafts still waiting for a decision
 ```
 
 | Level | Unattended | Needs your tap |
@@ -284,6 +286,7 @@ python agent.py propose --max-drafts 5 # more comment drafts per run (posts stay
 ```bash
 python agent.py control --kill         # emergency brake, works with no credentials
 python agent.py control --unkill
+python agent.py control --clear-pending # discard queued drafts after a persona change
 ```
 
 Approvals are collected by polling Telegram's `getUpdates` at the start of each
