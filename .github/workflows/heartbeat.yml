@@ -2,10 +2,21 @@ name: heartbeat
 
 on:
   schedule:
-    # Every 30 minutes, at off-peak minutes. GitHub's docs: high-load times
-    # "include the start of every hour" and "some queued jobs may be dropped".
-    # Never :00 or :30. Cron is UTC only — there is no timezone support.
-    - cron: '13,43 * * * *'
+    # Every 10 minutes, at off-peak minutes.
+    #
+    # This used to be every 30 (48 slots/day). Measured against this repo,
+    # roughly one slot in ten actually produces a run: the observed gaps were
+    # 6.2h, 6.7h, 4.3h, 3.6h, 2.9h, 6.4h — about five runs a day where the
+    # cron asked for forty-eight.
+    #
+    # Survival looks close to proportional, not fixed, so the way to shorten
+    # the wait is to offer more slots. 144 slots at the same rate should land
+    # nearer fifteen runs a day, cutting the average gap from ~5h to ~1.5h.
+    #
+    # Never :00 or :30, and never on the hour: GitHub's docs say high-load
+    # times "include the start of every hour" and that some queued jobs are
+    # dropped. Cron is UTC only - there is no timezone support.
+    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
