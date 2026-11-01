@@ -111,7 +111,12 @@ def collect(
     submolts: list[str],
     *,
     per_submolt: int = 25,
-    max_pages: int = 2,
+    # Two pages was sized for a 30-minute cadence: 48 runs a day each seeing
+    # the top of the feed. The scheduler now delivers roughly six runs a day,
+    # so the same depth misses most of what happened between them. Reading
+    # deeper is the only lever available — the read budget is 60/minute and a
+    # run uses 5 x max_pages, so 20 stays well inside it.
+    max_pages: int = 4,
     sort: str = "hot",
 ) -> list[Observation]:
     """Gather observations across the watched submolts, deduplicated by ID.

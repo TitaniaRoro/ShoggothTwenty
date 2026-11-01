@@ -36,7 +36,12 @@ never_engage = ["crypto", "trading", "agentfinance", "consciousness", "philosoph
 min_interval_minutes = 240        # batch: never send routine digests more often than this
 quiet_hours_utc = [22, 7]         # no routine digests 22:00–07:00 UTC
 max_items_per_digest = 20         # a backlog produces one digest, never a flood
-max_catchup_minutes = 180         # older than this: mark seen, stay silent
+max_catchup_minutes = 720         # older than this: mark seen, stay silent
+# MUST exceed min_interval_minutes above. It was 180 against a 240-minute
+# batching window, so a routine item was discarded an hour before it was
+# allowed to be sent and routine digests could never fire at all — only
+# priority ones, which bypass batching. TriageConfig clamps and complains
+# if this is ever set inconsistently again.
 priority_score = 8.0              # at or above this, send immediately and ignore batching
 escape_html = true                # non-negotiable; see PLAN.md §8
 
